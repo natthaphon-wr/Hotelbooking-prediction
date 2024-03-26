@@ -5,20 +5,20 @@ library(tidyverse)
 
 # 1. Import data ----
 hotel_data <- preprocess()
-city <- hotel_data[[3]]
-sapply(city, class)
-summary(city$is_canceled)
+resort <- hotel_data[[2]]
+sapply(resort, class)
+summary(resort$is_canceled)
 
 
 # 2. Do classification ----
 set.seed(1)
-folds <- createFolds(city$is_canceled, k=10)
+folds <- createFolds(resort$is_canceled, k=10)
 DT_result <- data.frame(matrix(ncol=4, nrow=0))
 colnames(DT_result) = c('Accuracy', 'Precision', 'Recall', 'F1')
 
 for (i in 1:10){
-  train <- city[-folds[[i]],] 
-  test <- city[folds[[i]],] 
+  train <- resort[-folds[[i]],] 
+  test <- resort[folds[[i]],] 
   
   ## 2.1 Decision Tree ----
   trees <- tree(is_canceled~., data=train, split=c("deviance", "gini"))
@@ -38,7 +38,7 @@ for (i in 1:10){
   DT_result[nrow(DT_result)+1, ] = c(CM$overall['Accuracy'], CM$byClass['Precision'],
                                      CM$byClass['Recall'], CM$byClass['F1'])
 }
-  
+
 
 # 3. Conclude results ----
 colMeans(DT_result)

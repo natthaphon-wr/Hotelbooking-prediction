@@ -16,7 +16,7 @@ preprocess <- function(){
            stays_in_nights, total_of_special_requests) %>% 
     replace(is.na(.), 0) %>% 
     mutate_if(is.character, as.factor) 
-  # hotel_all$is_canceled <- as.factor(hotel_all$is_canceled)
+  # 
   hotel_all$is_repeated_guest <- as.factor(hotel_all$is_repeated_guest)
   
   # sum(is.na(hotel_all)) 
@@ -25,6 +25,8 @@ preprocess <- function(){
   
   dummy <- dummyVars(" ~ .", data=hotel_all)
   hotel_1hot <- data.frame(predict(dummy, newdata=hotel_all))
+  hotel_1hot$is_canceled <- factor(hotel_1hot$is_canceled, 
+                                      levels=c(1,0))
   # sapply(hotel_1hot, class)
   
   resort <- hotel_1hot %>% 
