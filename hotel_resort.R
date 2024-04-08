@@ -1,8 +1,10 @@
 source('preprocess.R')
 library(tree)
 library(tidyverse) 
+library(caret)
 library(randomForest)
 library(gbm)
+library(xgboost)
 
 
 # 1. Import data ----
@@ -276,3 +278,131 @@ for (i in 1:10){
 }
 colMeans(GBM_result)
 #summary(GBM)
+
+
+# 6. XGBoost ----
+# Parameters Tuning
+#   - eta = learning rate
+#   - nrounds = max no. of boosting iterations
+#   - gamma = for avoid overfitting 
+#   - max_depth 
+#   - min_child_weight
+#   - subsample = subsample ratio for growing tree
+#   - colsample_bytree = subsample ratio of columns
+
+
+train_control = trainControl(method = "cv", number = 10, search = "grid")
+
+## 6.1 Initial nrounds and learning rate ----
+xgbGrid1 <-  expand.grid(eta = c(0.01, 0.1, 0.3, 0.5), 
+                         nrounds = c(50, 100, 500, 1000),
+                         # fixed values below
+                         max_depth = 6, 
+                         min_child_weight = 10,
+                         gamma = 0,
+                         subsample = 1,
+                         colsample_bytree = 1
+                         )
+xgbModel1 <- train(is_canceled~., 
+                   data = resort,
+                   method = "xgbTree", 
+                   trControl = train_control, 
+                   tuneGrid = xgbGrid1,
+                   verbosity = 0)
+print(xgbModel1)
+
+
+## 6.2 Tune max_depth, min_child_weight ----
+xgbGrid2 <-  expand.grid(max_depth = c(1, 5, 10, 15),
+                         min_child_weight = c(1, 10, 50, 100),
+                         # fixed values below
+                         eta = 0.3,
+                         nrounds = 500,
+                         gamma = 0,
+                         subsample = 1,
+                         colsample_bytree = 1
+                         )
+xgbModel2 <- train(is_canceled~., 
+                   data = resort,
+                   method = "xgbTree", 
+                   trControl = train_control, 
+                   tuneGrid = xgbGrid2,
+                   verbosity = 0)
+print(xgbModel2)
+
+
+## 6.3 Tune gamma ----
+xgbGrid3 <-  expand.grid(gamma = c(0, 0.1, 0.2, 0.3, 0.4),
+                         # fixed values below
+                         eta = 0.3,
+                         nrounds = 500,
+                         max_depth = 10,
+                         min_child_weight = 1,
+                         subsample = 1,
+                         colsample_bytree = 1
+)
+xgbModel3 <- train(is_canceled~., 
+                   data = resort,
+                   method = "xgbTree", 
+                   trControl = train_control, 
+                   tuneGrid = xgbGrid3,
+                   verbosity = 0)
+print(xgbModel3)
+
+## 6.4 Tune subsample and colsample_bytree ----
+xgbGrid4 <-  expand.grid(subsample = c(0.9, 1),
+                         colsample_bytree = c(0.1, 0.3, 0.5), 
+                         # fixed values below
+                         gamma = 0.1,
+                         eta = 0.3,
+                         nrounds = 500,
+                         max_depth = 10,
+                         min_child_weight = 1
+                         )
+xgbModel4 <- train(is_canceled~., 
+                   data = resort,
+                   method = "xgbTree", 
+                   trControl = train_control, 
+                   tuneGrid = xgbGrid4,
+                   verbosity = 0)
+print(xgbModel4)
+
+
+## 6.5 Adjust learning rate and rounds ----
+xgbGrid5 <-  expand.grid(eta = c(0.01, 0.1, 0.3), 
+                         nrounds = c(100, 500, 1000, 2000),
+                         # fixed values below
+                         max_depth = 10, 
+                         min_child_weight = 1,
+                         gamma = 0.1,
+                         subsample = 1,
+                         colsample_bytree = 0.5
+)
+xgbModel5 <- train(is_canceled~., 
+                   data = resort,
+                   method = "xgbTree", 
+                   trControl = train_control, 
+                   tuneGrid = xgbGrid5,
+                   verbosity = 0)
+print(xgbModel5)
+
+
+## 6.6 Final result ----
+# xgb.importance(xgbModel5$finalModel)
+# 
+# xgb_param_final <- xgbModel5$bestTune
+# 
+# XGB_result <- data.frame(matrix(ncol=4, nrow=0))
+# colnames(XGB_result) = c('Accuracy', 'Precision', 'Recall', 'F1')
+# for (i in 1:1){
+#   train <- resort[-folds[[i]],] 
+#   test <- resort[folds[[i]],] 
+#   
+#   dtrain = xgb.DMatrix(as.matrix(sapply(train %>% select(-is_canceled), as.numeric)), 
+#                        label=train$is_canceled)
+#   XGB <- xgb.train(params = xgb_param_final,
+#                    data = dtrain)
+# 
+#   
+# }
+
