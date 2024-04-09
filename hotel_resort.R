@@ -103,6 +103,7 @@ for (n in seq(1, 3, 1)){
 }
 
 ## 4.4 Final result ----
+set.seed(37)
 RF_result <- data.frame(matrix(ncol=4, nrow=0))
 colnames(RF_result) = c('Accuracy', 'Precision', 'Recall', 'F1')
 for (i in 1:10){
@@ -256,6 +257,7 @@ for (n in seq(0.3, 0.7, 0.1)){
 GBM_tuning3
 
 ## 5.5 Final result ----
+set.seed(37)
 GBM_result <- data.frame(matrix(ncol=4, nrow=0))
 colnames(GBM_result) = c('Accuracy', 'Precision', 'Recall', 'F1')
 for (i in 1:10){
@@ -421,6 +423,7 @@ for (n in seq(0.6, 0.7, 0.1)){
 xgb_threshold
 
 ## 6.7 Final result ----
+set.seed(37)
 xgb_params <- list(eta=0.1, gamma=0.1, max_depth=10, min_child_weight=1, subsample=1, colsample_bytree=0.5,
                    booster = "gbtree", objective="binary:logistic", eval_metric="error")
 XGB_result <- data.frame(matrix(ncol=4, nrow=0))

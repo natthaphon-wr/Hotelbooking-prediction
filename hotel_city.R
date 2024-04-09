@@ -1,8 +1,10 @@
 source('preprocess.R')
 library(tree)
-library(tidyverse) 
+library(tidyverse)
+library(caret)
 library(randomForest)
 library(gbm)
+library(xgboost)
 
 
 # 1. Import data ----
@@ -101,6 +103,7 @@ for (n in seq(3, 10, 2)){
 }
 
 ## 4.4 Final result ----
+set.seed(37)
 RF_result <- data.frame(matrix(ncol=4, nrow=0))
 colnames(RF_result) = c('Accuracy', 'Precision', 'Recall', 'F1')
 for (i in 1:10){
@@ -254,7 +257,8 @@ for (j in seq(0.3, 0.7, 0.1)){
 }
 GBMTune_bagFrac
 
-## 5.5 Final parameters ----
+## 5.5 Final result ----
+set.seed(37)
 GBM_result <- data.frame(matrix(ncol=4, nrow=0))
 colnames(GBM_result) = c('Accuracy', 'Precision', 'Recall', 'F1')
 for (i in 1:10){
@@ -278,3 +282,169 @@ for (i in 1:10){
 colMeans(GBM_result)
 GBM_result
 
+
+# 6. XGBoost ----
+# Parameters Tuning
+#   - eta = learning rate
+#   - nrounds = max no. of boosting iterations
+#   - gamma = for avoid overfitting 
+#   - max_depth 
+#   - min_child_weight
+#   - subsample = subsample ratio for growing tree
+#   - colsample_bytree = subsample ratio of columns
+
+city_xgb <- city
+city_xgb$is_canceled <- unclass(city_xgb$is_canceled)%%2 #Change variable type
+train_control = trainControl(method = "cv", number = 10, search = "grid")
+
+## 6.1 Initial nrounds and learning rate ----
+xgbGrid1 <-  expand.grid(eta = c(0.01, 0.1, 0.3, 0.5), 
+                         nrounds = c(100, 500, 1000),
+                         # fixed values below
+                         max_depth = 6, 
+                         min_child_weight = 10,
+                         gamma = 0,
+                         subsample = 1,
+                         colsample_bytree = 1
+)
+xgbModel1 <- train(is_canceled~., 
+                   data = city,
+                   method = "xgbTree", 
+                   trControl = train_control, 
+                   tuneGrid = xgbGrid1,
+                   verbosity = 0)
+print(xgbModel1)
+
+## 6.2 Tune max_depth, min_child_weight ----
+xgbGrid2 <-  expand.grid(max_depth = c(1, 5, 10),
+                         min_child_weight = c(1),
+                         # fixed values below
+                         eta = 0.3,
+                         nrounds = 1000,
+                         gamma = 0,
+                         subsample = 1,
+                         colsample_bytree = 1
+)
+xgbModel2 <- train(is_canceled~., 
+                   data = city,
+                   method = "xgbTree", 
+                   trControl = train_control, 
+                   tuneGrid = xgbGrid2,
+                   verbosity = 0)
+print(xgbModel2)
+
+## 6.3 Tune gamma ----
+xgbGrid3 <-  expand.grid(gamma = c(0, 0.1, 0.2, 0.3, 0.4),
+                         # fixed values below
+                         eta = 0.3,
+                         nrounds = 1000,
+                         max_depth = 5,
+                         min_child_weight = 1,
+                         subsample = 1,
+                         colsample_bytree = 1
+)
+xgbModel3 <- train(is_canceled~., 
+                   data = city,
+                   method = "xgbTree", 
+                   trControl = train_control, 
+                   tuneGrid = xgbGrid3,
+                   verbosity = 0)
+print(xgbModel3)
+
+## 6.4 Tune subsample and colsample_bytree ----
+xgbGrid4 <-  expand.grid(subsample = c(1),
+                         colsample_bytree = c(0.8, 0.9, 1), 
+                         # fixed values below
+                         gamma = 0.1,
+                         eta = 0.3,
+                         nrounds = 1000,
+                         max_depth = 10,
+                         min_child_weight = 1
+                         )
+xgbModel4 <- train(is_canceled~., 
+                   data = city,
+                   method = "xgbTree", 
+                   trControl = train_control, 
+                   tuneGrid = xgbGrid4,
+                   verbosity = 0)
+print(xgbModel4)
+
+## 6.5 Adjust learning rate and rounds ----
+xgbGrid5 <-  expand.grid(eta = c(0.01, 0.1, 0.2, 0.3), 
+                         nrounds = c(2000),
+                         # fixed values below
+                         max_depth = 5, 
+                         min_child_weight = 1,
+                         gamma = 0.1,
+                         subsample = 1,
+                         colsample_bytree = 1
+                         )
+xgbModel5 <- train(is_canceled~., 
+                   data = city,
+                   method = "xgbTree", 
+                   trControl = train_control, 
+                   tuneGrid = xgbGrid5,
+                   verbosity = 0)
+print(xgbModel5)
+
+## 6.6 Tune classification threshold ----
+xgb_params <- list(eta=0.3, gamma=0, max_depth=5, min_child_weight=1, subsample=1, colsample_bytree=1,
+                   booster = "gbtree", objective="binary:logistic", eval_metric="error")
+xgb_threshold <- data.frame(matrix(ncol=5, nrow=0))
+colnames(xgb_threshold) = c('Threshold', 'Accuracy', 'Precision', 'Recall', 'F1')
+for (n in seq(0.3, 0.8, 0.1)){
+  XGB_result <- data.frame(matrix(ncol=4, nrow=0))
+  colnames(XGB_result) = c('Accuracy', 'Precision', 'Recall', 'F1')
+  for (i in 1:10){
+    train <- city_xgb[-folds[[i]],]
+    test <- city_xgb[folds[[i]],]
+    
+    dtrain = xgb.DMatrix(as.matrix(sapply(train %>% select(-is_canceled), as.numeric)),
+                         label=train$is_canceled)
+    dtest = xgb.DMatrix(as.matrix(sapply(test %>% select(-is_canceled), as.numeric)),
+                        label=test$is_canceled)
+    XGB <- xgboost(params = xgb_params, data = dtrain, nrounds = 1000, verbose=0)
+    
+    xgb.pred <- predict(XGB, newdata=dtest)
+    xgb.pred <- ifelse (xgb.pred >= n, 1, 0)
+    xgb.pred <- factor(xgb.pred, levels = c(1,0))
+    
+    test$is_canceled <- factor(test$is_canceled, levels = c(1,0))
+    xgb.cm <- confusionMatrix(xgb.pred, test$is_canceled)
+    XGB_result[nrow(XGB_result)+1, ] = c(xgb.cm$overall['Accuracy'], xgb.cm$byClass['Precision'],
+                                         xgb.cm$byClass['Recall'], xgb.cm$byClass['F1'])
+  }
+  xgb_threshold[nrow(xgb_threshold)+1, ] = c(n, colMeans(XGB_result)[1], colMeans(XGB_result)[2],
+                                             colMeans(XGB_result)[3], colMeans(XGB_result)[4])
+  
+}
+xgb_threshold
+
+## 6.7 Final result ----
+set.seed(37)
+xgb_params <- list(eta=0.3, gamma=0, max_depth=5, min_child_weight=1, subsample=1, colsample_bytree=1,
+                   booster = "gbtree", objective="binary:logistic", eval_metric="error")
+XGB_result <- data.frame(matrix(ncol=4, nrow=0))
+colnames(XGB_result) = c('Accuracy', 'Precision', 'Recall', 'F1')
+for (i in 1:10){
+  train <- city_xgb[-folds[[i]],]
+  test <- city_xgb[folds[[i]],]
+  
+  dtrain = xgb.DMatrix(as.matrix(sapply(train %>% select(-is_canceled), as.numeric)),
+                       label=train$is_canceled)
+  dtest = xgb.DMatrix(as.matrix(sapply(test %>% select(-is_canceled), as.numeric)),
+                      label=test$is_canceled)
+  XGB <- xgboost(params = xgb_params, data = dtrain, nrounds = 1000, verbose=0)
+  
+  xgb.pred <- predict(XGB, newdata=dtest)
+  xgb.pred <- ifelse (xgb.pred >= 0.5, 1, 0)
+  xgb.pred <- factor(xgb.pred, levels = c(1,0))
+  
+  test$is_canceled <- factor(test$is_canceled, levels = c(1,0))
+  xgb.cm <- confusionMatrix(xgb.pred, test$is_canceled)
+  XGB_result[nrow(XGB_result)+1, ] = c(xgb.cm$overall['Accuracy'], xgb.cm$byClass['Precision'],
+                                       xgb.cm$byClass['Recall'], xgb.cm$byClass['F1'])
+}
+colMeans(XGB_result)
+XGB_result
+xgb.importance(model=XGB)
