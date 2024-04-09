@@ -290,7 +290,8 @@ colMeans(GBM_result)
 #   - subsample = subsample ratio for growing tree
 #   - colsample_bytree = subsample ratio of columns
 
-
+resort_xgb <- resort
+resort_xgb$is_canceled <- unclass(resort_xgb$is_canceled)%%2 #Change variable type
 train_control = trainControl(method = "cv", number = 10, search = "grid")
 
 ## 6.1 Initial nrounds and learning rate ----
@@ -384,25 +385,65 @@ xgbModel5 <- train(is_canceled~.,
                    trControl = train_control, 
                    tuneGrid = xgbGrid5,
                    verbosity = 0)
-print(xgbModel5)
 
+## 6.6 Tune classification threshold ----
+xgb_params <- list(eta=0.1, gamma=0.1, max_depth=10, min_child_weight=1, subsample=1, colsample_bytree=0.5,
+                   booster = "gbtree", objective="binary:logistic", eval_metric="error")
 
-## 6.6 Final result ----
-# xgb.importance(xgbModel5$finalModel)
-# 
-# xgb_param_final <- xgbModel5$bestTune
-# 
-# XGB_result <- data.frame(matrix(ncol=4, nrow=0))
-# colnames(XGB_result) = c('Accuracy', 'Precision', 'Recall', 'F1')
-# for (i in 1:1){
-#   train <- resort[-folds[[i]],] 
-#   test <- resort[folds[[i]],] 
-#   
-#   dtrain = xgb.DMatrix(as.matrix(sapply(train %>% select(-is_canceled), as.numeric)), 
-#                        label=train$is_canceled)
-#   XGB <- xgb.train(params = xgb_param_final,
-#                    data = dtrain)
-# 
-#   
-# }
+xgb_threshold <- data.frame(matrix(ncol=5, nrow=0))
+colnames(xgb_threshold) = c('Threshold', 'Accuracy', 'Precision', 'Recall', 'F1')
+for (n in seq(0.6, 0.7, 0.1)){
+  XGB_result <- data.frame(matrix(ncol=4, nrow=0))
+  colnames(XGB_result) = c('Accuracy', 'Precision', 'Recall', 'F1')
+  for (i in 1:10){
+    train <- resort_xgb[-folds[[i]],]
+    test <- resort_xgb[folds[[i]],]
+  
+    dtrain = xgb.DMatrix(as.matrix(sapply(train %>% select(-is_canceled), as.numeric)),
+                         label=train$is_canceled)
+    dtest = xgb.DMatrix(as.matrix(sapply(test %>% select(-is_canceled), as.numeric)),
+                        label=test$is_canceled)
+    XGB <- xgboost(params = xgb_params, data = dtrain, nrounds = 1000, verbose=0)
+  
+    xgb.pred <- predict(XGB, newdata=dtest)
+    xgb.pred <- ifelse (xgb.pred >= n, 1, 0)
+    xgb.pred <- factor(xgb.pred, levels = c(1,0))
+    
+    test$is_canceled <- factor(test$is_canceled, levels = c(1,0))
+    xgb.cm <- confusionMatrix(xgb.pred, test$is_canceled)
+    XGB_result[nrow(XGB_result)+1, ] = c(xgb.cm$overall['Accuracy'], xgb.cm$byClass['Precision'],
+                                         xgb.cm$byClass['Recall'], xgb.cm$byClass['F1'])
+  }
+  xgb_threshold[nrow(xgb_threshold)+1, ] = c(n, colMeans(XGB_result)[1], colMeans(XGB_result)[2],
+                                             colMeans(XGB_result)[3], colMeans(XGB_result)[4])
+  
+}
+xgb_threshold
 
+## 6.7 Final result ----
+xgb_params <- list(eta=0.1, gamma=0.1, max_depth=10, min_child_weight=1, subsample=1, colsample_bytree=0.5,
+                   booster = "gbtree", objective="binary:logistic", eval_metric="error")
+XGB_result <- data.frame(matrix(ncol=4, nrow=0))
+colnames(XGB_result) = c('Accuracy', 'Precision', 'Recall', 'F1')
+for (i in 1:10){
+  train <- resort_xgb[-folds[[i]],]
+  test <- resort_xgb[folds[[i]],]
+  
+  dtrain = xgb.DMatrix(as.matrix(sapply(train %>% select(-is_canceled), as.numeric)),
+                       label=train$is_canceled)
+  dtest = xgb.DMatrix(as.matrix(sapply(test %>% select(-is_canceled), as.numeric)),
+                      label=test$is_canceled)
+  XGB <- xgboost(params = xgb_params, data = dtrain, nrounds = 1000, verbose=0)
+  
+  xgb.pred <- predict(XGB, newdata=dtest)
+  xgb.pred <- ifelse (xgb.pred >= 0.5, 1, 0)
+  xgb.pred <- factor(xgb.pred, levels = c(1,0))
+  
+  test$is_canceled <- factor(test$is_canceled, levels = c(1,0))
+  xgb.cm <- confusionMatrix(xgb.pred, test$is_canceled)
+  XGB_result[nrow(XGB_result)+1, ] = c(xgb.cm$overall['Accuracy'], xgb.cm$byClass['Precision'],
+                                       xgb.cm$byClass['Recall'], xgb.cm$byClass['F1'])
+}
+colMeans(XGB_result)
+XGB_result
+xgb.importance(model=XGB)
