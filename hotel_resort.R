@@ -5,6 +5,8 @@ library(caret)
 library(randomForest)
 library(gbm)
 library(xgboost)
+library(lightgbm)
+library(data.table)
 
 
 # 1. Import data ----
@@ -450,3 +452,134 @@ for (i in 1:10){
 colMeans(XGB_result)
 XGB_result
 xgb.importance(model=XGB)
+
+
+# 7. LightGBM ----
+
+# Fixed parameters
+#   - objective = 'binary'
+#   - data_sample_strategy = 'goss'
+
+# 1. Boosting: gbdt
+#   - boosting = 'gbdt'
+#   - num_iterations
+#   - learning_rate
+#   - num_leaves
+#   - max_depth
+#   - min_data_in_leaf
+#   - bagging_fraction
+#   - bagging_freq
+#   - feature_fraction
+#   - lambda_l1 
+#   - lambda_l2
+
+# 2. Boosting: dart
+#   - boosting = 'dart'
+#   - num_iterations
+#   - learning_rate
+#   - num_leaves
+#   - max_depth
+#   - min_data_in_leaf
+#   - bagging_fraction
+#   - bagging_freq
+#   - feature_fraction
+#   - lambda_l1 
+#   - lambda_l2
+#   - xgboost_dart_mode = true
+#   - drop_rate
+#   - max_drop
+#   - skip_drop
+#   - uniform_drop (boolean)
+
+# params_gbdt <- list(objective='binary', data_sample_strategy='goss', 
+#                 boosting='dart', num_iterations=100, learning_rate=0.1, 
+#                 num_leaves=31, max_depth=-1, min_data_in_leaf=20, 
+#                 bagging_fraction=1, bagging_freq=0, feature_fraction=1, 
+#                 lambda_l1=0, lambda_l2=0)
+
+# params_dart <- list(objective='binary', data_sample_strategy='goss', 
+#                 boosting='gbdt', num_iterations=100, learning_rate=0.1, 
+#                 num_leaves=31, max_depth=-1, min_data_in_leaf=20, 
+#                 bagging_fraction=1, bagging_freq=0, feature_fraction=1, 
+#                 lambda_l1=0, lambda_l2=0,
+#                 xgboost_dart_mode=true, drop_rate=0.1, max_drop=50,
+#                 skip_drop=0.5, uniform_drop=false)
+
+resort_lgmb <- resort
+resort_lgmb$is_canceled <- unclass(resort_lgmb$is_canceled)%%2 #Change variable type
+
+## 7.1 Boosting: gbdt ----
+
+### 7.1.1 Initial tree ----
+# num_iterations, learning_rate, num_leaves
+grid1<- expand.grid(num_iterations = c(500, 1000),
+                    learning_rate = c(0.01, 0.1, 0.3),
+                    num_leaves = c(50, 100, 250))
+lgbm_cvtune1 <- data.frame(matrix(ncol=5, nrow=0))
+colnames(lgbm_cvtune1) = c('CV_round', 'num_iterations', 'learning_rate', 'num_leaves', 'binary_logloss')
+
+for (i in 1:10){
+  train <- resort_lgmb[-folds[[i]],]
+  test <- resort_lgmb[folds[[i]],]
+  dtrain <- lgb.Dataset(as.matrix(sapply(train %>% select(-is_canceled), as.numeric)),
+                        label=train$is_canceled)
+  dtest <- lgb.Dataset.create.valid(dataset = dtrain, 
+                                    data = as.matrix(sapply(test %>% select(-is_canceled), as.numeric)), 
+                                    label = test$is_canceled)
+  valids <- list(test = dtest)
+  
+  model <- list()
+  loss <- numeric(nrow(grid1))
+  for (j in 1:nrow(grid1)){
+    model[[j]] <- lgb.train(params = list(num_iterations = grid1[j, 'num_iterations'],
+                                          learning_rate = grid1[j, 'learning_rate'],
+                                          num_leaves = grid1[j, 'num_leaves'],
+                                          # fixed value below
+                                          objective = 'binary', 
+                                          boosting = 'gbdt', 
+                                          max_depth = -1, 
+                                          min_data_in_leaf = 20, 
+                                          bagging_fraction = 1, 
+                                          bagging_freq = 0, 
+                                          feature_fraction = 1, 
+                                          lambda_l1 = 0, 
+                                          lambda_l2 = 0,
+                                          ),
+                            data = dtrain,
+                            valids = valids,
+                            verbose = 0
+                            )
+    loss[j] <- min(rbindlist(model[[j]]$record_evals$test$binary_logloss))
+  }
+  lgbm_cvtune1[nrow(lgbm_cvtune1)+1, ] = c(i,
+                                           grid1[which.min(loss), "num_iterations"],
+                                           grid1[which.min(loss), "learning_rate"],
+                                           grid1[which.min(loss), "num_leaves"],
+                                           min(loss))
+  print(lgbm_cvtune1[i])  
+}
+lgbm_cvtune1
+
+### 7.1.2 Tuning tree parameters ----
+# max_depth, min_data_in_leaf
+
+
+
+
+### 7.1.3 Tuning sampling ----
+# bagging_fraction, bagging_freq, feature_fraction
+
+
+
+### 7.1.4 Tuning regularization ----
+# lambda_l1, lambda_l2
+
+
+### 7.1.5 Tuning no.tree and learning rate again ----
+# num_iterations, learning_rate, num_leaves
+
+ 
+
+
+
+
