@@ -5,6 +5,8 @@ library(caret)
 library(randomForest)
 library(gbm)
 library(xgboost)
+library(lightgbm)
+library(data.table)
 
 
 # 1. Import data ----
@@ -448,3 +450,613 @@ for (i in 1:10){
 colMeans(XGB_result)
 XGB_result
 xgb.importance(model=XGB)
+
+# 7. LightGBM ----
+# Fixed parameters
+#   - objective = 'binary'
+#   - data_sample_strategy = 'goss'
+
+# 1. Boosting: gbdt
+#   - boosting = 'gbdt'
+#   - num_iterations
+#   - learning_rate
+#   - num_leaves
+#   - min_data_in_leaf
+#   - feature_fraction
+#   - top_rate
+#   - other_rate
+#   - lambda_l1 
+#   - lambda_l2
+
+# 2. Boosting: dart
+#   - boosting = 'dart'
+#   - num_iterations
+#   - learning_rate
+#   - num_leaves
+#   - min_data_in_leaf
+#   - feature_fraction
+#   - top_rate
+#   - other_rate
+#   - lambda_l1 
+#   - lambda_l2
+#   - xgboost_dart_mode = true
+#   - drop_rate
+#   - max_drop
+#   - skip_drop
+#   - uniform_drop (boolean)
+
+# params_gbdt <- list(objective='binary', data_sample_strategy='goss', boosting='gbdt', 
+#                 num_iterations=100, learning_rate=0.1, num_leaves=31, 
+#                 min_data_in_leaf=20, 
+#                 feature_fraction=1,
+#                 top_rate=0.2, other_rate=0.1,
+#                 lambda_l1=0, lambda_l2=0)
+
+# params_dart <- list(objective='binary', data_sample_strategy='goss', boosting='dart', 
+#                 num_iterations=100, learning_rate=0.1, num_leaves=31, 
+#                 min_data_in_leaf=20, 
+#                 feature_fraction=1, 
+#                 lambda_l1=0, lambda_l2=0,
+#                 top_rate=0.2, other_rate=0.1
+#                 xgboost_dart_mode=true, drop_rate=0.1, max_drop=50,
+#                 skip_drop=0.5, uniform_drop=false)
+
+city_lgmb <- city
+city_lgmb$is_canceled <- unclass(city_lgmb$is_canceled)%%2 #Change variable type
+
+## 7.1 Boosting: gbdt ----
+
+### 7.1.1 Initial tree ----
+# num_iterations, learning_rate, num_leaves
+grid1<- expand.grid(num_iterations = c(500, 1000),
+                    learning_rate = c(0.01, 0.1),
+                    num_leaves = c(100, 250))
+lgbm_cvtune1 <- data.frame(matrix(ncol=5, nrow=0))
+colnames(lgbm_cvtune1) = c('CV_round', 'num_iterations', 'learning_rate', 'num_leaves', 'binary_logloss')
+
+for (i in 1:10){
+  train <- city_lgmb[-folds[[i]],]
+  test <- city_lgmb[folds[[i]],]
+  dtrain <- lgb.Dataset(as.matrix(sapply(train %>% select(-is_canceled), as.numeric)),
+                        label=train$is_canceled)
+  dtest <- lgb.Dataset.create.valid(dataset = dtrain, 
+                                    data = as.matrix(sapply(test %>% select(-is_canceled), as.numeric)), 
+                                    label = test$is_canceled)
+  valids <- list(test = dtest)
+  
+  model <- list()
+  loss <- numeric(nrow(grid1))
+  for (j in 1:nrow(grid1)){
+    model[[j]] <- lgb.train(params = list(num_iterations = grid1[j, 'num_iterations'],
+                                          learning_rate = grid1[j, 'learning_rate'],
+                                          num_leaves = grid1[j, 'num_leaves'],
+                                          # fixed value below
+                                          objective = 'binary', 
+                                          data_sample_strategy = 'goss',
+                                          boosting = 'gbdt', 
+                                          min_data_in_leaf = 20, 
+                                          feature_fraction = 1,
+                                          top_rate = 0.2, 
+                                          other_rate = 0.1,
+                                          lambda_l1 = 0, 
+                                          lambda_l2 = 0
+    ),
+    data = dtrain,
+    valids = valids,
+    verbose = 0
+    )
+    loss[j] <- min(rbindlist(model[[j]]$record_evals$test$binary_logloss))
+  }
+  lgbm_cvtune1[nrow(lgbm_cvtune1)+1, ] = c(i,
+                                           grid1[which.min(loss), "num_iterations"],
+                                           grid1[which.min(loss), "learning_rate"],
+                                           grid1[which.min(loss), "num_leaves"],
+                                           min(loss))
+  print(lgbm_cvtune1[i,])  
+}
+lgbm_cvtune1
+
+### 7.1.2 Tuning tree parameters ----
+# min_data_in_leaf
+grid2<- expand.grid(min_data_in_leaf = c(10, 20))
+lgbm_cvtune2 <- data.frame(matrix(ncol=3, nrow=0))
+colnames(lgbm_cvtune2) = c('CV_round', 'min_data_in_leaf', 'binary_logloss')
+for (i in 1:10){
+  train <- city_lgmb[-folds[[i]],]
+  test <- city_lgmb[folds[[i]],]
+  dtrain <- lgb.Dataset(as.matrix(sapply(train %>% select(-is_canceled), as.numeric)),
+                        label=train$is_canceled)
+  dtest <- lgb.Dataset.create.valid(dataset = dtrain, 
+                                    data = as.matrix(sapply(test %>% select(-is_canceled), as.numeric)), 
+                                    label = test$is_canceled)
+  valids <- list(test = dtest)
+  
+  model <- list()
+  loss <- numeric(nrow(grid2))
+  for (j in 1:nrow(grid2)){
+    model[[j]] <- lgb.train(params = list(min_data_in_leaf = grid2[j, 'min_data_in_leaf'],   
+                                          # fixed value below
+                                          objective = 'binary', 
+                                          data_sample_strategy = 'goss',
+                                          boosting = 'gbdt', 
+                                          num_iterations = 1000,
+                                          learning_rate = 0.01,
+                                          num_leaves = 250,
+                                          feature_fraction = 1,
+                                          top_rate = 0.2, 
+                                          other_rate = 0.1,
+                                          lambda_l1 = 0, 
+                                          lambda_l2 = 0
+    ),
+    data = dtrain,
+    valids = valids,
+    verbose = 0
+    )
+    loss[j] <- min(rbindlist(model[[j]]$record_evals$test$binary_logloss))
+  }
+  lgbm_cvtune2[nrow(lgbm_cvtune2)+1, ] = c(i,
+                                           grid2[which.min(loss), "min_data_in_leaf"],
+                                           min(loss))
+  print(lgbm_cvtune2[i,])  
+}
+lgbm_cvtune2
+
+### 7.1.3 Tuning feature_fraction ----
+# feature_fraction
+grid3 <- expand.grid(feature_fraction = c(1))
+lgbm_cvtune3 <- data.frame(matrix(ncol=3, nrow=0))
+colnames(lgbm_cvtune3) = c('CV_round', 'feature_fraction', 'binary_logloss')
+for (i in 1:10){
+  train <- city_lgmb[-folds[[i]],]
+  test <- city_lgmb[folds[[i]],]
+  dtrain <- lgb.Dataset(as.matrix(sapply(train %>% select(-is_canceled), as.numeric)),
+                        label=train$is_canceled)
+  dtest <- lgb.Dataset.create.valid(dataset = dtrain, 
+                                    data = as.matrix(sapply(test %>% select(-is_canceled), as.numeric)), 
+                                    label = test$is_canceled)
+  valids <- list(test = dtest)
+  
+  model <- list()
+  loss <- numeric(nrow(grid3))
+  for (j in 1:nrow(grid3)){
+    model[[j]] <- lgb.train(params = list(feature_fraction = grid3[j, 'feature_fraction'], 
+                                          # fixed value below
+                                          objective = 'binary', 
+                                          data_sample_strategy = 'goss',
+                                          boosting = 'gbdt', 
+                                          num_iterations = 1000,
+                                          learning_rate = 0.01,
+                                          num_leaves = 250,
+                                          min_data_in_leaf = 10,
+                                          top_rate = 0.2, 
+                                          other_rate = 0.1,                                          
+                                          lambda_l1 = 0, 
+                                          lambda_l2 = 0
+    ),
+    data = dtrain,
+    valids = valids,
+    verbose = 0
+    )
+    loss[j] <- min(rbindlist(model[[j]]$record_evals$test$binary_logloss))
+  }
+  lgbm_cvtune3[nrow(lgbm_cvtune3)+1, ] = c(i,
+                                           grid3[which.min(loss), "feature_fraction"],
+                                           min(loss))
+  print(loss)
+  print(lgbm_cvtune3[i,])  
+}
+lgbm_cvtune3
+
+### 7.1.4 Tuning goss rates ----
+# top_rate, other_rate 
+grid4 <- expand.grid(top_rate = c(0.1, 0.2, 0.5),
+                     other_rate = c(0.1, 0.2, 0.5))
+lgbm_cvtune4 <- data.frame(matrix(ncol=4, nrow=0))
+colnames(lgbm_cvtune4) = c('CV_round', 'top_rate', 'other_rate', 'binary_logloss')
+for (i in 1:10){
+  train <- city_lgmb[-folds[[i]],]
+  test <- city_lgmb[folds[[i]],]
+  dtrain <- lgb.Dataset(as.matrix(sapply(train %>% select(-is_canceled), as.numeric)),
+                        label=train$is_canceled)
+  dtest <- lgb.Dataset.create.valid(dataset = dtrain, 
+                                    data = as.matrix(sapply(test %>% select(-is_canceled), as.numeric)), 
+                                    label = test$is_canceled)
+  valids <- list(test = dtest)
+  
+  model <- list()
+  loss <- numeric(nrow(grid4))
+  for (j in 1:nrow(grid4)){
+    model[[j]] <- lgb.train(params = list(top_rate = grid4[j, 'top_rate'], 
+                                          other_rate = grid4[j, 'other_rate'],
+                                          # fixed value below
+                                          objective = 'binary', 
+                                          data_sample_strategy = 'goss',
+                                          boosting = 'gbdt',
+                                          num_iterations = 1000,
+                                          learning_rate = 0.01,
+                                          num_leaves = 250,
+                                          min_data_in_leaf = 10,
+                                          feature_fraction = 1, 
+                                          lambda_l1 = 0, 
+                                          lambda_l2 = 0
+    ),
+    data = dtrain,
+    valids = valids,
+    verbose = 0
+    )
+    loss[j] <- min(rbindlist(model[[j]]$record_evals$test$binary_logloss))
+  }
+  lgbm_cvtune4[nrow(lgbm_cvtune4)+1, ] = c(i,
+                                           grid4[which.min(loss), "top_rate"],
+                                           grid4[which.min(loss), "other_rate"],
+                                           min(loss))
+  print(loss)
+  print(lgbm_cvtune4[i,])  
+}
+lgbm_cvtune4
+
+### 7.1.5 Tuning regularization ----
+# lambda_l1, lambda_l2
+grid5 <- expand.grid(lambda_l1 = c(0, 0.01, 0.05),
+                     lambda_l2 = c(0, 0.01, 0.05))
+lgbm_cvtune5 <- data.frame(matrix(ncol=4, nrow=0))
+colnames(lgbm_cvtune5) = c('CV_round', 'lambda_l1', 'lambda_l2', 'binary_logloss')
+
+for (i in 1:10){
+  train <- city_lgmb[-folds[[i]],]
+  test <- city_lgmb[folds[[i]],]
+  dtrain <- lgb.Dataset(as.matrix(sapply(train %>% select(-is_canceled), as.numeric)),
+                        label=train$is_canceled)
+  dtest <- lgb.Dataset.create.valid(dataset = dtrain, 
+                                    data = as.matrix(sapply(test %>% select(-is_canceled), as.numeric)), 
+                                    label = test$is_canceled)
+  valids <- list(test = dtest)
+  
+  model <- list()
+  loss <- numeric(nrow(grid5))
+  for (j in 1:nrow(grid5)){
+    model[[j]] <- lgb.train(params = list(lambda_l1 = grid5[j, 'lambda_l1'], 
+                                          lambda_l2 = grid5[j, 'lambda_l2'],
+                                          # fixed value below
+                                          objective = 'binary', 
+                                          data_sample_strategy = 'goss',
+                                          boosting = 'gbdt',
+                                          num_iterations = 1000,
+                                          learning_rate = 0.01,
+                                          num_leaves = 250,
+                                          min_data_in_leaf = 10,
+                                          feature_fraction = 1, 
+                                          top_rate = 0.2, 
+                                          other_rate = 0.5
+    ),
+    data = dtrain,
+    valids = valids,
+    verbose = 0
+    )
+    loss[j] <- min(rbindlist(model[[j]]$record_evals$test$binary_logloss))
+  }
+  lgbm_cvtune5[nrow(lgbm_cvtune5)+1, ] = c(i,
+                                           grid5[which.min(loss), "lambda_l1"],
+                                           grid5[which.min(loss), "lambda_l2"],
+                                           min(loss))
+  print(loss)
+  print(lgbm_cvtune5[i,])  
+}
+lgbm_cvtune5
+
+### 7.1.6 Tuning no.tree and learning rate again ----
+# num_iterations, learning_rate, num_leaves
+grid6 <- expand.grid(num_iterations = c(1000),
+                     learning_rate = c(0.01, 0.05, 0.1),
+                     num_leaves = c(100, 250))
+lgbm_cvtune6 <- data.frame(matrix(ncol=5, nrow=0))
+colnames(lgbm_cvtune6) = c('CV_round', 'num_iterations', 'learning_rate', 'num_leaves', 'binary_logloss')
+
+for (i in 1:10){
+  train <- city_lgmb[-folds[[i]],]
+  test <- city_lgmb[folds[[i]],]
+  dtrain <- lgb.Dataset(as.matrix(sapply(train %>% select(-is_canceled), as.numeric)),
+                        label=train$is_canceled)
+  dtest <- lgb.Dataset.create.valid(dataset = dtrain, 
+                                    data = as.matrix(sapply(test %>% select(-is_canceled), as.numeric)), 
+                                    label = test$is_canceled)
+  valids <- list(test = dtest)
+  
+  model <- list()
+  loss <- numeric(nrow(grid6))
+  for (j in 1:nrow(grid6)){
+    model[[j]] <- lgb.train(params = list(num_iterations = grid6[j, 'num_iterations'],
+                                          learning_rate = grid6[j, 'learning_rate'],
+                                          num_leaves = grid6[j, 'num_leaves'],
+                                          # fixed value below
+                                          objective = 'binary', 
+                                          data_sample_strategy = 'goss',
+                                          boosting = 'gbdt', 
+                                          min_data_in_leaf = 10, 
+                                          feature_fraction = 1,
+                                          top_rate = 0.2, 
+                                          other_rate = 0.5,
+                                          lambda_l1 = 0, 
+                                          lambda_l2 = 0.01
+    ),
+    data = dtrain,
+    valids = valids,
+    verbose = 0
+    )
+    loss[j] <- min(rbindlist(model[[j]]$record_evals$test$binary_logloss))
+  }
+  lgbm_cvtune6[nrow(lgbm_cvtune6)+1, ] = c(i,
+                                           grid6[which.min(loss), "num_iterations"],
+                                           grid6[which.min(loss), "learning_rate"],
+                                           grid6[which.min(loss), "num_leaves"],
+                                           min(loss))
+  print(loss)
+  print(lgbm_cvtune6[i,])  
+}
+lgbm_cvtune6
+
+
+## 7.2. Boosting: dart ----
+### 7.2.1 Uniform drop ----
+grid_d1 <- expand.grid(uniform_drop = c(TRUE, FALSE))
+lgbm_cvtune_d1 <- data.frame(matrix(ncol=3, nrow=0))
+colnames(lgbm_cvtune_d1) = c('CV_round', 'uniform_drop', 'binary_logloss')
+
+for (i in 1:10){
+  train <- city_lgmb[-folds[[i]],]
+  test <- city_lgmb[folds[[i]],]
+  dtrain <- lgb.Dataset(as.matrix(sapply(train %>% select(-is_canceled), as.numeric)),
+                        label=train$is_canceled)
+  dtest <- lgb.Dataset.create.valid(dataset = dtrain, 
+                                    data = as.matrix(sapply(test %>% select(-is_canceled), as.numeric)), 
+                                    label = test$is_canceled)
+  valids <- list(test = dtest)
+  
+  model <- list()
+  loss <- numeric(nrow(grid_d1))
+  for (j in 1:nrow(grid_d1)){
+    model[[j]] <- lgb.train(params = list(uniform_drop = grid_d1[j, "uniform_drop"],
+                                          # fixed value below
+                                          objective = 'binary', 
+                                          data_sample_strategy = 'goss',
+                                          boosting = 'dart',
+                                          num_iterations = 1000,
+                                          learning_rate = 0.01,
+                                          num_leaves = 250,
+                                          min_data_in_leaf = 10, 
+                                          feature_fraction = 1,
+                                          top_rate = 0.2, 
+                                          other_rate = 0.5,
+                                          lambda_l1 = 0, 
+                                          lambda_l2 = 0.01,
+                                          xgboost_dart_mode = TRUE,
+                                          drop_rate = 0.1,
+                                          max_drop = 50,
+                                          skip_drop = 0.5
+    ),
+    data = dtrain,
+    valids = valids,
+    verbose = 0
+    )
+    loss[j] <- min(rbindlist(model[[j]]$record_evals$test$binary_logloss))
+  }
+  lgbm_cvtune_d1[nrow(lgbm_cvtune_d1)+1, ] = c(i,
+                                               grid_d1[which.min(loss), "uniform_drop"],
+                                               min(loss))
+  print(loss)
+  print(lgbm_cvtune_d1[i,])  
+}
+lgbm_cvtune_d1
+
+### 7.2.2 Tune drop_rate ----
+grid_d2 <- expand.grid(drop_rate = c(0.1, 0.2, 0.3))
+lgbm_cvtune_d2 <- data.frame(matrix(ncol=3, nrow=0))
+colnames(lgbm_cvtune_d2) = c('CV_round', 'drop_rate', 'binary_logloss')
+
+for (i in 1:10){
+  train <- city_lgmb[-folds[[i]],]
+  test <- city_lgmb[folds[[i]],]
+  dtrain <- lgb.Dataset(as.matrix(sapply(train %>% select(-is_canceled), as.numeric)),
+                        label=train$is_canceled)
+  dtest <- lgb.Dataset.create.valid(dataset = dtrain, 
+                                    data = as.matrix(sapply(test %>% select(-is_canceled), as.numeric)), 
+                                    label = test$is_canceled)
+  valids <- list(test = dtest)
+  
+  model <- list()
+  loss <- numeric(nrow(grid_d2))
+  for (j in 1:nrow(grid_d2)){
+    model[[j]] <- lgb.train(params = list(drop_rate = grid_d2[j, "drop_rate"],
+                                          # fixed value below
+                                          objective = 'binary', 
+                                          data_sample_strategy = 'goss',
+                                          boosting = 'dart',
+                                          num_iterations = 1000,
+                                          learning_rate = 0.01,
+                                          num_leaves = 250,
+                                          min_data_in_leaf = 10, 
+                                          feature_fraction = 1,
+                                          top_rate = 0.2, 
+                                          other_rate = 0.5,
+                                          lambda_l1 = 0, 
+                                          lambda_l2 = 0.01,
+                                          xgboost_dart_mode = TRUE,
+                                          uniform_drop = TRUE,
+                                          max_drop = 50,
+                                          skip_drop = 0.5
+    ),
+    data = dtrain,
+    valids = valids,
+    verbose = 0
+    )
+    loss[j] <- min(rbindlist(model[[j]]$record_evals$test$binary_logloss))
+  }
+  lgbm_cvtune_d2[nrow(lgbm_cvtune_d2)+1, ] = c(i,
+                                               grid_d2[which.min(loss), "drop_rate"],
+                                               min(loss))
+  print(loss)
+  print(lgbm_cvtune_d2[i,])  
+}
+lgbm_cvtune_d2
+
+### 7.2.3 Tune max_drop, skip_drop ----
+grid_d3 <- expand.grid(max_drop = c(10, 50, 100),
+                       skip_drop = c(0.25, 0.5, 0.75))
+lgbm_cvtune_d3 <- data.frame(matrix(ncol=4, nrow=0))
+colnames(lgbm_cvtune_d3) = c('CV_round', 'max_drop', 'skip_drop', 'binary_logloss')
+
+for (i in 1:10){
+  train <- city_lgmb[-folds[[i]],]
+  test <- city_lgmb[folds[[i]],]
+  dtrain <- lgb.Dataset(as.matrix(sapply(train %>% select(-is_canceled), as.numeric)),
+                        label=train$is_canceled)
+  dtest <- lgb.Dataset.create.valid(dataset = dtrain, 
+                                    data = as.matrix(sapply(test %>% select(-is_canceled), as.numeric)), 
+                                    label = test$is_canceled)
+  valids <- list(test = dtest)
+  
+  model <- list()
+  loss <- numeric(nrow(grid_d3))
+  for (j in 1:nrow(grid_d3)){
+    model[[j]] <- lgb.train(params = list(max_drop = grid_d3[j, "max_drop"],
+                                          skip_drop = grid_d3[j, "skip_drop"],
+                                          # fixed value below
+                                          objective = 'binary', 
+                                          data_sample_strategy = 'goss',
+                                          boosting = 'dart',
+                                          num_iterations = 1000,
+                                          learning_rate = 0.01,
+                                          num_leaves = 250,
+                                          min_data_in_leaf = 1, 
+                                          feature_fraction = 0.8,
+                                          top_rate = 0.2, 
+                                          other_rate = 0.5,
+                                          lambda_l1 = 0, 
+                                          lambda_l2 = 0,
+                                          xgboost_dart_mode = TRUE,
+                                          uniform_drop = TRUE,
+                                          drop_rate = 0.1
+                                          
+    ),
+    data = dtrain,
+    valids = valids,
+    verbose = 0
+    )
+    loss[j] <- min(rbindlist(model[[j]]$record_evals$test$binary_logloss))
+  }
+  lgbm_cvtune_d3[nrow(lgbm_cvtune_d3)+1, ] = c(i,
+                                               grid_d3[which.min(loss), "max_drop"],
+                                               grid_d3[which.min(loss), "skip_drop"],
+                                               min(loss))
+  print(loss)
+  print(lgbm_cvtune_d3[i,])  
+}
+lgbm_cvtune_d3
+
+
+## 7.3 Compare gbdt vs dart ----
+set.seed(37)
+lgbm_gbdt_params <- list(objective = 'binary', data_sample_strategy = 'goss', boosting = 'gbdt',
+                         num_iterations = 1000, learning_rate = 0.01, num_leaves = 250,
+                         min_data_in_leaf = 10, feature_fraction = 1,
+                         top_rate = 0.2, other_rate = 0.5,
+                         lambda_l1 = 0, lambda_l2 = 0.1)
+lgbm_dart_params <- list(objective = 'binary', data_sample_strategy = 'goss', boosting = 'dart',
+                         num_iterations = 1000, learning_rate = 0.01, num_leaves = 250,
+                         min_data_in_leaf = 10, feature_fraction = 1,
+                         top_rate = 0.2, other_rate = 0.5,
+                         lambda_l1 = 0, lambda_l2 = 0.1,
+                         xgboost_dart_mode = TRUE, uniform_drop = TRUE,
+                         drop_rate = 0.1, max_drop = 10, skip_drop = 0.75)
+
+loss_gbdt <- numeric(10)
+loss_dart <- numeric(10)
+for (i in 1:10){
+  train <- city_lgmb[-folds[[i]],]
+  test <- city_lgmb[folds[[i]],]
+  dtrain <- lgb.Dataset(as.matrix(sapply(train %>% select(-is_canceled), as.numeric)),
+                        label=train$is_canceled)
+  dtest <- lgb.Dataset.create.valid(dataset = dtrain, 
+                                    data = as.matrix(sapply(test %>% select(-is_canceled), as.numeric)), 
+                                    label = test$is_canceled)
+  valids <- list(test = dtest)
+  
+  model_gbdt <- lgb.train(params = lgbm_gbdt_params, data = dtrain, valids = valids, verbose = 0)
+  model_dart <- lgb.train(params = lgbm_dart_params, data = dtrain, valids = valids, verbose = 0)
+  
+  loss_gbdt[i] <- min(rbindlist(model_gbdt$record_evals$test$binary_logloss))
+  loss_dart[i] <- min(rbindlist(model_dart$record_evals$test$binary_logloss))
+  
+  print('Loss gbdt: ')
+  print(loss_gbdt[i])
+  print('Loss dart: ')
+  print(loss_dart[i])
+}
+
+## 7.4 Tuning classification threshold ----
+lgbm_params_fin <- list(objective = 'binary', data_sample_strategy = 'goss', boosting = 'gbdt',
+                    num_iterations = 1000, learning_rate = 0.01, num_leaves = 250,
+                    min_data_in_leaf = 10, feature_fraction = 1,
+                    top_rate = 0.2, other_rate = 0.5,
+                    lambda_l1 = 0, lambda_l2 = 0.1)
+lgbm_threshold <- data.frame(matrix(ncol=5, nrow=0))
+colnames(lgbm_threshold) = c('Threshold', 'Accuracy', 'Precision', 'Recall', 'F1')
+
+for (n in seq(0.4, 0.6, 0.1)){
+  lgbm_result <- data.frame(matrix(ncol=4, nrow=0))
+  colnames(lgbm_result) = c('Accuracy', 'Precision', 'Recall', 'F1')
+  for (i in 1:5){
+    train <- city_lgmb[-folds[[i]],]
+    test <- city_lgmb[folds[[i]],]
+    dtrain <- lgb.Dataset(as.matrix(sapply(train %>% select(-is_canceled), as.numeric)),
+                          label=train$is_canceled)
+    dtest <- as.matrix(sapply(test %>% select(-is_canceled), as.numeric))
+    
+    LGBM <- lgb.train(params = lgbm_params,
+                      data = dtrain,
+                      verbose = 0
+    )
+    LGBM.pred <- predict(LGBM, newdata=dtest)
+    LGBM.pred <- ifelse (LGBM.pred >= n, 1, 0)
+    LGBM.pred <- factor(LGBM.pred, levels = c(1,0))
+    
+    test$is_canceled <- factor(test$is_canceled, levels = c(1,0))
+    LGBM.cm <- confusionMatrix(LGBM.pred, test$is_canceled)
+    lgbm_result[nrow(lgbm_result)+1, ] = c(LGBM.cm$overall['Accuracy'], LGBM.cm$byClass['Precision'],
+                                           LGBM.cm$byClass['Recall'], LGBM.cm$byClass['F1'])
+    
+  }
+  lgbm_threshold[nrow(lgbm_threshold)+1, ] = c(n, colMeans(lgbm_result)[1], colMeans(lgbm_result)[2],
+                                               colMeans(lgbm_result)[3], colMeans(lgbm_result)[4])
+  print(lgbm_threshold[nrow(lgbm_threshold), ])
+}
+lgbm_threshold
+
+## 7.5 Final model: gbdt boosting ----
+lgbm_result <- data.frame(matrix(ncol=4, nrow=0))
+colnames(lgbm_result) = c('Accuracy', 'Precision', 'Recall', 'F1')
+for (i in 1:10){
+  train <- city_lgmb[-folds[[i]],]
+  test <- city_lgmb[folds[[i]],]
+  dtrain <- lgb.Dataset(as.matrix(sapply(train %>% select(-is_canceled), as.numeric)),
+                        label=train$is_canceled)
+  dtest <- as.matrix(sapply(test %>% select(-is_canceled), as.numeric))
+  
+  LGBM <- lgb.train(params = lgbm_params,
+                    data = dtrain,
+                    verbose = 0
+  )
+  LGBM.pred <- predict(LGBM, newdata=dtest)
+  LGBM.pred <- ifelse (LGBM.pred >= n, 1, 0)
+  LGBM.pred <- factor(LGBM.pred, levels = c(1,0))
+  
+  test$is_canceled <- factor(test$is_canceled, levels = c(1,0))
+  LGBM.cm <- confusionMatrix(LGBM.pred, test$is_canceled)
+  lgbm_result[nrow(lgbm_result)+1, ] = c(LGBM.cm$overall['Accuracy'], LGBM.cm$byClass['Precision'],
+                                         LGBM.cm$byClass['Recall'], LGBM.cm$byClass['F1'])
+}
+lgbm_result
+colMeans(lgbm_result)
+lgb.importance(model = LGBM, percentage = TRUE)
+lgb.importance(model = LGBM, percentage = FALSE)
+

@@ -964,12 +964,12 @@ lgbm_cvtune_d3
 ## 7.3 Compare gbdt vs dart ----
 set.seed(37)
 lgbm_gbdt_params <- list(objective = 'binary', data_sample_strategy = 'goss', boosting = 'gbdt',
-                         num_iterations = 1000, learning_rate = 0.1, num_leaves = 250,
+                         num_iterations = 1000, learning_rate = 0.01, num_leaves = 250,
                          min_data_in_leaf = 1, feature_fraction = 0.8,
                          top_rate = 0.2, other_rate = 0.5,
                          lambda_l1 = 0, lambda_l2 = 0)
 lgbm_dart_params <- list(objective = 'binary', data_sample_strategy = 'goss', boosting = 'dart',
-                         num_iterations = 1000, learning_rate = 0.1, num_leaves = 250,
+                         num_iterations = 1000, learning_rate = 0.01, num_leaves = 250,
                          min_data_in_leaf = 1, feature_fraction = 0.8,
                          top_rate = 0.2, other_rate = 0.5,
                          lambda_l1 = 0, lambda_l2 = 0,
