@@ -29,15 +29,11 @@ for (i in 1:10){
   test <- city[folds[[i]],] 
   
   trees <- tree(is_canceled~., data=train, split=c("deviance", "gini"))
-  # summary(trees)
-  # plot(trees)
-  # text(trees, pretty=0)
+  summary(trees)
   
   cv.trees <- cv.tree(trees, FUN=prune.misclass, K=10)
   prune.trees <- prune.misclass(trees, best=cv.trees$size[which.min(cv.trees$dev)])
-  # plot(cv.trees)
-  # plot(prune.trees)
-  # text(prune.trees, pretty=0)
+  plot(cv.trees)
   # summary(prune.trees)$used
   
   tree.pred <- predict(prune.trees, test, type='class')
@@ -45,7 +41,7 @@ for (i in 1:10){
   DT_result[nrow(DT_result)+1, ] = c(CM$overall['Accuracy'], CM$byClass['Precision'],
                                      CM$byClass['Recall'], CM$byClass['F1'])
 }
-colMeans(DT_Result)
+colMeans(DT_result)
 summary(prune.trees)$used
 
 
@@ -108,21 +104,32 @@ for (n in seq(3, 10, 2)){
 set.seed(37)
 RF_result <- data.frame(matrix(ncol=4, nrow=0))
 colnames(RF_result) = c('Accuracy', 'Precision', 'Recall', 'F1')
+RF_imp <- matrix(0, nrow = ncol(city)-1, ncol=1)
+rownames(RF_imp) <- colnames(city %>% select(-is_canceled))
+colnames(RF_imp) <- c('MeanDecreaseGini')
 for (i in 1:10){
   train <- city[-folds[[i]],] 
   test <- city[folds[[i]],] 
   
   RF <- randomForest(is_canceled~., data=train, ntree=100, mtry=20, nodesize=3)
+  RF_imp <- RF_imp + importance(RF)
   
   RF.pred <- predict(RF, test, type='response')
   RF_CM <- confusionMatrix(RF.pred, test$is_canceled)
   RF_result[nrow(RF_result)+1, ] = c(RF_CM$overall['Accuracy'], RF_CM$byClass['Precision'],
                                      RF_CM$byClass['Recall'], RF_CM$byClass['F1'])
+  print(i)
 }
-
 colMeans(RF_result)
-importance(RF)
 
+# Feature importance
+RF_imp <- RF_imp/10
+RF_imp <- data.frame('MeanDecreaseGini' = RF_imp)
+RF_imp20 <- top_n(RF_imp, 20, MeanDecreaseGini)
+ggplot(RF_imp20, aes(y=reorder(rownames(RF_imp20), MeanDecreaseGini), x=MeanDecreaseGini)) +
+  geom_bar(stat = "identity") +
+  ylab('Features') +
+  ggtitle('City Hotel using Random Forest')
 
 # 5. Gradient Boosting ----
 # Parameters Tuning
@@ -428,7 +435,11 @@ xgb_params <- list(eta=0.3, gamma=0, max_depth=5, min_child_weight=1, subsample=
                    booster = "gbtree", objective="binary:logistic", eval_metric="error")
 XGB_result <- data.frame(matrix(ncol=4, nrow=0))
 colnames(XGB_result) = c('Accuracy', 'Precision', 'Recall', 'F1')
+XGB_imp <- matrix(0, nrow = ncol(city)-1, ncol=0)
+XGB_imp <- cbind(XGB_imp, colnames(city %>% select(-is_canceled)))
+colnames(XGB_imp) <- c('Feature')
 for (i in 1:10){
+  print(i)
   train <- city_xgb[-folds[[i]],]
   test <- city_xgb[folds[[i]],]
   
@@ -437,6 +448,14 @@ for (i in 1:10){
   dtest = xgb.DMatrix(as.matrix(sapply(test %>% select(-is_canceled), as.numeric)),
                       label=test$is_canceled)
   XGB <- xgboost(params = xgb_params, data = dtrain, nrounds = 1000, verbose=0)
+  xgb_gain <- xgb.importance(model=XGB)[, 1:2]
+  colnames(xgb_gain)[2] <- paste0('Gain.', as.character(i))
+  XGB_imp <- merge(x = XGB_imp, 
+                   y = xgb_gain, 
+                   by.x = "Feature", 
+                   by.y = "Feature", 
+                   all.x = TRUE
+                  )
   
   xgb.pred <- predict(XGB, newdata=dtest)
   xgb.pred <- ifelse (xgb.pred >= 0.5, 1, 0)
@@ -448,8 +467,18 @@ for (i in 1:10){
                                        xgb.cm$byClass['Recall'], xgb.cm$byClass['F1'])
 }
 colMeans(XGB_result)
-XGB_result
-xgb.importance(model=XGB)
+
+# Feature importance
+XGB_imp[is.na(XGB_imp)] <- 0
+XGB_imp$MeansGain <- rowMeans(XGB_imp[2:11])
+
+XGB_imp20 <- top_n(XGB_imp, 20, MeansGain)
+ggplot(XGB_imp20, aes(y=reorder(Feature, MeansGain), x=MeansGain)) +
+  geom_bar(stat = "identity") +
+  xlab('Gain') +
+  ylab('Features') +
+  ggtitle('City Hotel using XGBoost')
+
 
 # 7. LightGBM ----
 # Fixed parameters
@@ -1033,21 +1062,40 @@ for (n in seq(0.4, 0.6, 0.1)){
 lgbm_threshold
 
 ## 7.5 Final model: gbdt boosting ----
+lgbm_params_final <- list(objective = 'binary', data_sample_strategy = 'goss', boosting = 'gbdt',
+                        num_iterations = 1000, learning_rate = 0.01, num_leaves = 250,
+                        min_data_in_leaf = 10, feature_fraction = 1,
+                        top_rate = 0.2, other_rate = 0.5,
+                        lambda_l1 = 0, lambda_l2 = 0.1)
+
 lgbm_result <- data.frame(matrix(ncol=4, nrow=0))
 colnames(lgbm_result) = c('Accuracy', 'Precision', 'Recall', 'F1')
+LGB_imp <- matrix(0, nrow = ncol(city)-1, ncol=0)
+LGB_imp <- cbind(LGB_imp, colnames(city %>% select(-is_canceled)))
+colnames(LGB_imp) <- c('Feature')
 for (i in 1:10){
+  print(i)
   train <- city_lgmb[-folds[[i]],]
   test <- city_lgmb[folds[[i]],]
   dtrain <- lgb.Dataset(as.matrix(sapply(train %>% select(-is_canceled), as.numeric)),
                         label=train$is_canceled)
   dtest <- as.matrix(sapply(test %>% select(-is_canceled), as.numeric))
   
-  LGBM <- lgb.train(params = lgbm_params,
+  LGBM <- lgb.train(params = lgbm_params_final,
                     data = dtrain,
                     verbose = 0
+                    )
+  lgb_gain <- lgb.importance(model=LGBM, percentage=TRUE)[, 1:2]
+  colnames(lgb_gain)[2] <- paste0('Gain.', as.character(i))
+  LGB_imp <- merge(x = LGB_imp, 
+                   y = lgb_gain, 
+                   by.x = "Feature", 
+                   by.y = "Feature", 
+                   all.x = TRUE
   )
+  
   LGBM.pred <- predict(LGBM, newdata=dtest)
-  LGBM.pred <- ifelse (LGBM.pred >= n, 1, 0)
+  LGBM.pred <- ifelse (LGBM.pred >= 0.5, 1, 0)
   LGBM.pred <- factor(LGBM.pred, levels = c(1,0))
   
   test$is_canceled <- factor(test$is_canceled, levels = c(1,0))
@@ -1055,8 +1103,15 @@ for (i in 1:10){
   lgbm_result[nrow(lgbm_result)+1, ] = c(LGBM.cm$overall['Accuracy'], LGBM.cm$byClass['Precision'],
                                          LGBM.cm$byClass['Recall'], LGBM.cm$byClass['F1'])
 }
-lgbm_result
 colMeans(lgbm_result)
-lgb.importance(model = LGBM, percentage = TRUE)
-lgb.importance(model = LGBM, percentage = FALSE)
 
+# Feature importance
+LGB_imp[is.na(LGB_imp)] <- 0
+LGB_imp$MeansGain <- rowMeans(LGB_imp[2:11])
+
+LGB_imp20 <- top_n(LGB_imp, 20, MeansGain)
+ggplot(LGB_imp20, aes(y=reorder(Feature, MeansGain), x=MeansGain)) +
+  geom_bar(stat = "identity") +
+  xlab('Gain') +
+  ylab('Features') +
+  ggtitle('City Hotel using LightGBM')
