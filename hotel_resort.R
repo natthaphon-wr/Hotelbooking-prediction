@@ -7,6 +7,7 @@ library(gbm)
 library(xgboost)
 library(lightgbm)
 library(data.table)
+library(catboost)
 
 
 # 1. Import data ----
@@ -1127,3 +1128,154 @@ ggplot(LGB_imp20, aes(y=reorder(Feature, MeansGain), x=MeansGain)) +
   xlab('Gain') +
   ylab('Features') +
   ggtitle('Resort Hotel using LightGBM')
+
+
+# 8. CatBoost ----
+# Tuning parameters
+# - depth = Tree Depth 
+# - learning_rate
+# - iterations = Number of trees
+# - l2_leaf_reg = L2 regularization coefficient
+# - rsm = The percentage of features to use at each iteration
+# - border_count = The number of splits for numerical features
+
+## Import new data ----
+hotel_data2 <- preprocess(one_hot = FALSE)
+resort2 <- hotel_data2[[2]]
+sapply(resort2, class)
+summary(resort2$is_canceled)
+
+train_control = trainControl(method = "cv", number = 10, search = "grid", classProbs = TRUE)
+
+
+## 8.1 Initial trees ----
+# Tune iterations and learning_rate
+catb_grid1 <- expand.grid(iterations = c(100, 500, 1000),
+                          learning_rate = c(0.01, 0.05, 0.1, 0.3),
+                          # fixed value
+                          depth = 6,
+                          l2_leaf_reg = 1e-6,
+                          rsm = 0.9,
+                          border_count = 255)
+catb_Tune1 <- train(resort2 %>% select(-is_canceled), 
+                    as.factor(make.names(resort2$is_canceled)),
+                    method = catboost.caret,
+                    tuneGrid = catb_grid1, 
+                    trControl = train_control,
+                    verbose = 0)
+print(catb_Tune1)
+
+## 8.2 Tune tree depth ----
+catb_grid2 <- expand.grid(depth = c(4, 6, 8, 10, 12),
+                          # fixed value
+                          iterations = 1000,
+                          learning_rate = 0.1,
+                          l2_leaf_reg = 1e-6,
+                          rsm = 0.9,
+                          border_count = 255)
+catb_Tune2 <- train(resort2 %>% select(-is_canceled), 
+                    as.factor(make.names(resort2$is_canceled)),
+                    method = catboost.caret,
+                    tuneGrid = catb_grid2, 
+                    trControl = train_control,
+                    verbose = 0)
+print(catb_Tune2)
+
+## 8.3 Tune rsm ----
+catb_grid3 <- expand.grid(rsm = c(0.6, 0.8, 1),
+                          # fixed value
+                          iterations = 1000,
+                          learning_rate = 0.1,
+                          depth = 8,
+                          l2_leaf_reg = 1e-3,
+                          border_count = 255)
+catb_Tune3 <- train(resort2 %>% select(-is_canceled), 
+                    as.factor(make.names(resort2$is_canceled)),
+                    method = catboost.caret,
+                    tuneGrid = catb_grid3, 
+                    trControl = train_control,
+                    verbose = 0)
+print(catb_Tune3)
+
+## 8.4 Tune border_count ----
+catb_grid4 <- expand.grid(border_count = c(512),
+                          # fixed value
+                          iterations = 1000,
+                          learning_rate = 0.1,
+                          depth = 8,
+                          rsm = 1,
+                          l2_leaf_reg = 1e-3
+                          )
+catb_Tune4 <- train(resort2 %>% select(-is_canceled), 
+                    as.factor(make.names(resort2$is_canceled)),
+                    method = catboost.caret,
+                    tuneGrid = catb_grid4, 
+                    trControl = train_control,
+                    verbose = 0)
+print(catb_Tune4)
+
+## 8.5 Tune L2 reg ----
+catb_grid5 <- expand.grid(l2_leaf_reg = c(0.05),
+                          # fixed value
+                          iterations = 1000,
+                          learning_rate = 0.1,
+                          depth = 8,
+                          rsm = 1,
+                          border_count = 512
+                          )
+catb_Tune5 <- train(resort2 %>% select(-is_canceled), 
+                    as.factor(make.names(resort2$is_canceled)),
+                    method = catboost.caret,
+                    tuneGrid = catb_grid5, 
+                    trControl = train_control,
+                    verbose = 0)
+print(catb_Tune5)
+
+
+## 8.6 Tune classification threshold ----
+sapply(resort2, class)
+# resort2$is_canceled <- unclass(resort2$is_canceled)%%2 #Change variable type
+
+catb_params <- list(iterations = 1000, 
+                    learning_rate = 0.1,
+                    rsm = 1,
+                    depth = 8,
+                    border_count = 512,
+                    l2_leaf_reg = 0.01,
+                    logging_level = 'Silent'
+                    )
+
+catb_threshold <- data.frame(matrix(ncol=5, nrow=0))
+colnames(catb_threshold) = c('Threshold', 'Accuracy', 'Precision', 'Recall', 'F1')
+for (n in seq(0.55, 0.7, 0.05)){
+  catb_result <- data.frame(matrix(ncol=4, nrow=0))
+  colnames(catb_result) = c('Accuracy', 'Precision', 'Recall', 'F1')
+  
+  for (i in 1:10){
+    print(i)
+    train <- resort2[-folds[[i]],]
+    test <- resort2[folds[[i]],]
+    
+    train_pool <- catboost.load_pool(data = train %>% select(-is_canceled), 
+                                     label = unclass(train$is_canceled)%%2)
+    test_pool <- catboost.load_pool(data = test %>% select(-is_canceled), 
+                                    label = unclass(test$is_canceled)%%2)
+  
+    catb_model <- catboost.train(train_pool, params = catb_params)
+    
+    catb.pred <- catboost.predict(catb_model, test_pool,prediction_type = 'Probability')
+    catb.pred <- ifelse (catb.pred >= n, 1, 0)
+    catb.pred <- factor(catb.pred, levels = c(1,0))
+    
+    test$is_canceled <- factor(test$is_canceled, levels = c(1,0))
+    catb.cm <- confusionMatrix(catb.pred, test$is_canceled)
+    catb_result[nrow(catb_result)+1, ] = c(catb.cm$overall['Accuracy'], catb.cm$byClass['Precision'],
+                                           catb.cm$byClass['Recall'], catb.cm$byClass['F1'])
+  }
+  catb_threshold[nrow(catb_threshold)+1, ] = c(n, colMeans(catb_result)[1], colMeans(catb_result)[2],
+                                               colMeans(catb_result)[3], colMeans(catb_result)[4])
+}
+catb_threshold
+
+
+
