@@ -3,17 +3,79 @@ library(dplyr)
 library(tidyr)
 library(ggplot2)
 library(caret)
+library(stats)
+library(reshape2)
+library(heatmaply)
 source('preprocess.R')
 
 
-# 1. Import data ----
+# Import data ----
 data <- preprocess()
 hotel_all <- data[[1]]
 resort <- data[[2]]
 city <- data[[3]]
 
+# Correlation b/w features ----
 
-# 2. Compare resort, city hotel ----
+## City ----
+city$is_canceled <- as.numeric(city$is_canceled)
+city_imp <- city %>% 
+  select(is_canceled, 
+         adr, 
+         adults,
+         booking_changes,
+         children,
+         customer_type.Transient,
+         customer_type.Transient.Party,
+         distribution_channel.TA.TO,
+         market_segment.Groups,
+         market_segment.Online.TA,
+         market_segment.Offline.TA.TO,
+         previous_cancellation_ratio,
+         stays_in_nights,
+         total_of_special_requests)
+
+city_cor <- melt(round(cor(city_imp, method = "spearman"),2))
+ggplot(data = city_cor, aes(x=Var1, y=Var2, fill=value)) +
+  geom_tile() +
+  scale_fill_gradient2(low = "blue", high = "red", mid = "white", 
+                       midpoint = 0, limit = c(-1,1), space = "Lab", 
+                       name="Spearman Correlation") +
+  theme(axis.text.x = element_text(angle = 45, vjust = 0.5, hjust = 0.5)) +
+  labs(title = "Correlation Matrix in City Hotel",
+       x = "Features",
+       y = "Features")
+  
+## Resort ----
+resort$is_canceled <- as.numeric(resort$is_canceled)
+resort_imp <- resort %>% 
+  select(is_canceled, 
+         adr, 
+         adults,
+         booking_changes,
+         children,
+         customer_type.Transient,
+         customer_type.Transient.Party,
+         distribution_channel.TA.TO,
+         market_segment.Groups,
+         market_segment.Online.TA,
+         market_segment.Offline.TA.TO,
+         previous_cancellation_ratio,
+         stays_in_nights,
+         total_of_special_requests)
+resort_cor <- melt(round(cor(resort_imp, method = "spearman"),2))
+ggplot(data = resort_cor, aes(x=Var1, y=Var2, fill=value)) +
+  geom_tile() +
+  scale_fill_gradient2(low = "blue", high = "red", mid = "white", 
+                       midpoint = 0, limit = c(-1,1), space = "Lab", 
+                       name="Spearman Correlation") +
+  theme(axis.text.x = element_text(angle = 45, vjust = 0.5, hjust = 0.5)) +
+  labs(title = "Correlation Matrix in Resort Hotel",
+       x = "Features",
+       y = "Features")
+
+
+# Compare resort, city hotel ----
 ggplot(hotel_all) +
   geom_bar(aes(x = customer_type, fill=hotel), position = 'dodge')
 ggplot(hotel_all) +
@@ -37,7 +99,7 @@ ggplot(hotel_all) +
   ylim(0,10)
 
 
-# 3 Compare resort, city hotel on is_canceled ----
+# Compare resort, city hotel on is_canceled ----
 ggplot(hotel_all) +
   geom_bar(aes(x = customer_type, 
                fill=interaction(hotel, is_canceled, sep="-", lex.order=TRUE)), 

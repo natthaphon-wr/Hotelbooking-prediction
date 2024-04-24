@@ -1144,6 +1144,7 @@ hotel_data2 <- preprocess(one_hot = FALSE)
 resort2 <- hotel_data2[[2]]
 sapply(resort2, class)
 summary(resort2$is_canceled)
+folds <- createFolds(resort2$is_canceled, k=10)
 
 train_control = trainControl(method = "cv", number = 10, search = "grid", classProbs = TRUE)
 
@@ -1277,5 +1278,58 @@ for (n in seq(0.55, 0.7, 0.05)){
 }
 catb_threshold
 
+## 8.7 Final CatBoost ----
+catb_params <- list(iterations = 1000, 
+                    learning_rate = 0.1,
+                    rsm = 1,
+                    depth = 8,
+                    border_count = 512,
+                    l2_leaf_reg = 0.01,
+                    logging_level = 'Silent')
+
+catb_result <- data.frame(matrix(ncol=4, nrow=0))
+colnames(catb_result) = c('Accuracy', 'Precision', 'Recall', 'F1')
+catb_imp <- matrix(0, nrow = ncol(resort2)-1, ncol=0)
+catb_imp <- cbind(catb_imp, colnames(resort2 %>% select(-is_canceled)))
+colnames(catb_imp) <- c('Feature')
+
+for (i in 1:10){
+  print(i)
+  train <- resort2[-folds[[i]],]
+  test <- resort2[folds[[i]],]
+  
+  train_pool <- catboost.load_pool(data = train %>% select(-is_canceled), 
+                                   label = unclass(train$is_canceled)%%2)
+  test_pool <- catboost.load_pool(data = test %>% select(-is_canceled), 
+                                  label = unclass(test$is_canceled)%%2)
+  
+  catb_model <- catboost.train(train_pool, params = catb_params)
+  catb_fi <- catboost.get_feature_importance(catb_model)
+  catb_fi <- data.frame(Feature = row.names(catb_fi), catb_fi)
+  colnames(catb_fi)[2] <- paste0('FI.', as.character(i))
+  catb_imp <- merge(x = catb_imp, 
+                    y = catb_fi, 
+                    by.x = "Feature", 
+                    by.y = "Feature", 
+                    all.x = TRUE)
+  
+  catb.pred <- catboost.predict(catb_model, test_pool,prediction_type = 'Probability')
+  catb.pred <- ifelse (catb.pred >= 0.6, 1, 0)
+  catb.pred <- factor(catb.pred, levels = c(1,0))
+  
+  test$is_canceled <- factor(test$is_canceled, levels = c(1,0))
+  catb.cm <- confusionMatrix(catb.pred, test$is_canceled)
+  catb_result[nrow(catb_result)+1, ] = c(catb.cm$overall['Accuracy'], catb.cm$byClass['Precision'],
+                                         catb.cm$byClass['Recall'], catb.cm$byClass['F1'])
+}
+colMeans(catb_result)
+
+# Feature importance
+catb_imp$MeansFI <- rowMeans(catb_imp[2:11])
+ggplot(catb_imp, aes(y=reorder(Feature, MeansFI), x=MeansFI)) +
+  geom_bar(stat = "identity") +
+  xlab('Importance') +
+  ylab('Features') +
+  ggtitle('Resort Hotel using CatBoost')
 
 
