@@ -11,42 +11,43 @@ library(catboost)
 
 
 # 1. Import data ----
-hotel_data <- preprocess()
+hotel_data <- preprocess(one_hot = TRUE, feature_select = TRUE)
 resort <- hotel_data[[2]]
 sapply(resort, class)
 summary(resort$is_canceled)
 
 
-# 2. Split cross-validation ----
-set.seed(1)
-folds <- createFolds(resort$is_canceled, k=10)
+# 2. Outer loop splitting ----
+outer_folds <- createFolds(resort$is_canceled, k=5)
 
+
+
+# folds <- createFolds(resort$is_canceled, k=10)
 
 # 3 Decision Tree ----
 DT_result <- data.frame(matrix(ncol=4, nrow=0))
 colnames(DT_result) = c('Accuracy', 'Precision', 'Recall', 'F1')
-for (i in 1:1){
-  train <- resort[-folds[[i]],] 
-  test <- resort[folds[[i]],] 
+for (i in 1:5){
+  print(i)
+  train <- resort[-outer_folds[[i]],] 
+  test <- resort[outer_folds[[i]],] 
   
   trees <- tree(is_canceled~., data=train, split=c("deviance", "gini"))
   # summary(trees)
-  # plot(trees)
-  # text(trees, pretty=0)
-
-  cv.trees <- cv.tree(trees, FUN=prune.misclass, K=10)
+  
+  cv.trees <- cv.tree(trees, FUN=prune.misclass, K=5)
   prune.trees <- prune.misclass(trees, best=cv.trees$size[which.min(cv.trees$dev)])
   # plot(cv.trees)
   # plot(prune.trees)
-  # text(prune.trees, pretty=0)
-  # summary(prune.trees)$used
-
+  # text(prune.trees, pretty=1)
+  
   tree.pred <- predict(prune.trees, test, type='class')
-  DT_CM <- confusionMatrix(tree.pred, test$is_canceled)
-  DT_result[nrow(DT_result)+1, ] = c(DT_CM$overall['Accuracy'], DT_CM$byClass['Precision'],
-                                     DT_CM$byClass['Recall'], DT_CM$byClass['F1'])
+  CM <- confusionMatrix(tree.pred, test$is_canceled)
+  DT_result[nrow(DT_result)+1, ] = c(CM$overall['Accuracy'], CM$byClass['Precision'],
+                                     CM$byClass['Recall'], CM$byClass['F1'])
 }
 colMeans(DT_result)
+write.csv(DT_result, ".\\result\\DT_resort_Evaluation.csv", row.names=FALSE)
 summary(prune.trees)$used
 
 
@@ -56,76 +57,109 @@ summary(prune.trees)$used
 #   - mtry = no. features that samples
 #   - nodesize  = min size of terminal nodes
 
-## 4.1 Tune ntree (manual) ----
-for (n in seq(100, 500, 100)){
-  RF_result <- data.frame(matrix(ncol=4, nrow=0))
-  colnames(RF_result) = c('Accuracy', 'Precision', 'Recall', 'F1')
-  for (i in 1:10){
-    train <- resort[-folds[[i]],] 
-    test <- resort[folds[[i]],] 
-  
-    RF <- randomForest(is_canceled~., data=train, ntree=n, mtry=sqrt(33), nodesize=1)
+## 4.1 Tune ntree ----
+RF_ntree <- data.frame(matrix(ncol=6, nrow=0))
+colnames(RF_ntree) = c('ntree', 'fold', 'Accuracy', 'Precision', 'Recall', 'F1')
+for (n in seq(100, 500, 200)){
+  for (i in 1:5){
+    print(paste(n, i))
+    train <- resort[-outer_folds[[i]],]
+    train_idx <- createDataPartition(train$is_canceled, p=0.7, list = FALSE)
+    train_inner <- train[train_idx , ]
+    val_inner  <- train[-train_idx, ]
     
-    RF.pred <- predict(RF, test, type='response')
-    RF_CM <- confusionMatrix(RF.pred, test$is_canceled)
-    RF_result[nrow(RF_result)+1, ] = c(RF_CM$overall['Accuracy'], RF_CM$byClass['Precision'],
+    RF <- randomForest(is_canceled~., data=train_inner, ntree=n, mtry=10, nodesize=1)
+    RF.pred <- predict(RF, val_inner, type='response')
+    RF_CM <- confusionMatrix(RF.pred, val_inner$is_canceled)
+    RF_ntree[nrow(RF_ntree)+1, ] = c(n, i,
+                                       RF_CM$overall['Accuracy'], RF_CM$byClass['Precision'],
                                        RF_CM$byClass['Recall'], RF_CM$byClass['F1'])
   }
-  print(n)
-  print(colMeans(RF_result))
 }
-
-## 4.2 Tune mtry with tuneRF function ----
-RF_result <- data.frame(matrix(ncol=4, nrow=0))
-colnames(RF_result) = c('Accuracy', 'Precision', 'Recall', 'F1')
-for (i in 1:10){
-  train <- resort[-folds[[i]],] 
-  test <- resort[folds[[i]],] 
+write.csv(RF_ntree, ".\\result\\RF_resort_ntree.csv", row.names=FALSE)
+RF_ntree %>% 
+  group_by(ntree) %>% 
+  summarise(AVG_accuracy = mean(Accuracy),
+            AVG_precision = mean(Precision),
+            AVG_recall = mean(Recall),
+            AVG_F1 = mean(F1))
   
-  tune_mtry <- tuneRF(train[,-1], train[,1], stepFactor = 2, ntreeTry=50, plot=TRUE, trace=FALSE)
-  print(tune_mtry)
+## 4.2 Tune mtry  ----
+RF_mtry <- data.frame(matrix(ncol=6, nrow=0))
+colnames(RF_mtry) = c('mtry', 'fold', 'Accuracy', 'Precision', 'Recall', 'F1')
+for (n in c(5, 10, 20, 30)){
+  for (i in 1:5){
+    print(paste(n, i))
+    train <- resort[-outer_folds[[i]],]
+    train_idx <- createDataPartition(train$is_canceled, p=0.7, list = FALSE)
+    train_inner <- train[train_idx , ]
+    val_inner  <- train[-train_idx, ]
+    
+    RF <- randomForest(is_canceled~., data=train_inner, ntree=300, mtry=n, nodesize=1)
+    RF.pred <- predict(RF, val_inner, type='response')
+    RF_CM <- confusionMatrix(RF.pred, val_inner$is_canceled)
+    RF_mtry[nrow(RF_mtry)+1, ] = c(n, i,
+                                   RF_CM$overall['Accuracy'], RF_CM$byClass['Precision'],
+                                   RF_CM$byClass['Recall'], RF_CM$byClass['F1'])
+  }
 }
+write.csv(RF_mtry, ".\\result\\RF_resort_mtry.csv", row.names=FALSE)
+RF_mtry %>% 
+  group_by(mtry) %>% 
+  summarise(AVG_accuracy = mean(Accuracy),
+            AVG_precision = mean(Precision),
+            AVG_recall = mean(Recall),
+            AVG_F1 = mean(F1))
 
 ## 4.3 Tune nodesize (manual) ----
-for (n in seq(1, 3, 1)){
-  RF_result <- data.frame(matrix(ncol=4, nrow=0))
-  colnames(RF_result) = c('Accuracy', 'Precision', 'Recall', 'F1')
-  for (i in 1:10){
-    train <- resort[-folds[[i]],] 
-    test <- resort[folds[[i]],] 
+RF_nodesize <- data.frame(matrix(ncol=6, nrow=0))
+colnames(RF_nodesize) = c('nodesize', 'fold', 'Accuracy', 'Precision', 'Recall', 'F1')
+for (n in c(1, 5, 10, 20, 50)){
+  for (i in 1:5){
+    print(paste(n, i))
+    train <- resort[-outer_folds[[i]],]
+    train_idx <- createDataPartition(train$is_canceled, p=0.7, list = FALSE)
+    train_inner <- train[train_idx , ]
+    val_inner  <- train[-train_idx, ]
     
-    RF <- randomForest(is_canceled~., data=train, ntree=100, mtry=10, nodesize=n)
-    
-    RF.pred <- predict(RF, test, type='response')
-    RF_CM <- confusionMatrix(RF.pred, test$is_canceled)
-    RF_result[nrow(RF_result)+1, ] = c(RF_CM$overall['Accuracy'], RF_CM$byClass['Precision'],
-                                       RF_CM$byClass['Recall'], RF_CM$byClass['F1'])
+    RF <- randomForest(is_canceled~., data=train_inner, ntree=300, mtry=10, nodesize=n)
+    RF.pred <- predict(RF, val_inner, type='response')
+    RF_CM <- confusionMatrix(RF.pred, val_inner$is_canceled)
+    RF_nodesize[nrow(RF_nodesize)+1, ] = c(n, i,
+                                           RF_CM$overall['Accuracy'], RF_CM$byClass['Precision'],
+                                           RF_CM$byClass['Recall'], RF_CM$byClass['F1'])
   }
-  print(n)
-  print(colMeans(RF_result))
 }
+write.csv(RF_nodesize, ".\\result\\RF_resort_nodesize.csv", row.names=FALSE)
+RF_nodesize %>% 
+  group_by(nodesize) %>% 
+  summarise(AVG_accuracy = mean(Accuracy),
+            AVG_precision = mean(Precision),
+            AVG_recall = mean(Recall),
+            AVG_F1 = mean(F1))
 
-## 4.4 Final result ----
-set.seed(37)
+## 4.4 Final RF model ----
 RF_result <- data.frame(matrix(ncol=4, nrow=0))
 colnames(RF_result) = c('Accuracy', 'Precision', 'Recall', 'F1')
 RF_imp <- matrix(0, nrow = ncol(resort)-1, ncol=1)
 rownames(RF_imp) <- colnames(resort %>% select(-is_canceled))
 colnames(RF_imp) <- c('MeanDecreaseGini')
-for (i in 1:10){
+set.seed(37)
+for (i in 1:5){
   print(i)
-  train <- resort[-folds[[i]],] 
-  test <- resort[folds[[i]],] 
-  
-  RF <- randomForest(is_canceled~., data=train, ntree=100, mtry=10, nodesize=1)
+  train <- resort[-outer_folds[[i]],]
+  test <- resort[outer_folds[[i]],]
+
+  RF <- randomForest(is_canceled~., data=train, ntree=300, mtry=10, nodesize=1)
   RF_imp <- RF_imp + importance(RF)
-  
+
   RF.pred <- predict(RF, test, type='response')
   RF_CM <- confusionMatrix(RF.pred, test$is_canceled)
   RF_result[nrow(RF_result)+1, ] = c(RF_CM$overall['Accuracy'], RF_CM$byClass['Precision'],
                                      RF_CM$byClass['Recall'], RF_CM$byClass['F1'])
 }
 colMeans(RF_result)
+write.csv(RF_result, ".\\result\\RF_resort_Evaluation.csv", row.names=FALSE)
 
 # Feature importance
 RF_imp <- RF_imp/10
@@ -135,7 +169,7 @@ ggplot(RF_imp20, aes(y=reorder(rownames(RF_imp20), MeanDecreaseGini), x=MeanDecr
   geom_bar(stat = "identity") +
   ylab('Features') +
   ggtitle('Resort Hotel using Random Forest')
-
+write.csv(RF_imp, ".\\result\\RF_resort_FI.csv", row.names=FALSE)
 
 # 5. Gradient Boosting ----
 # Parameters Tuning
@@ -145,6 +179,7 @@ ggplot(RF_imp20, aes(y=reorder(rownames(RF_imp20), MeanDecreaseGini), x=MeanDecr
 #   - n.minobsinnode = min no. of observations in terminal node
 #   - bag.fraction = fraction of training set to be selected to build next tree
 
+## GBM dataset ----
 resort_GBM <- resort
 resort_GBM$is_canceled <- unclass(resort_GBM$is_canceled)%%2 #Change variable type
 
@@ -272,20 +307,21 @@ for (n in seq(0.3, 0.7, 0.1)){
 GBM_tuning3
 
 ## 5.5 Final result ----
-set.seed(37)
+### 5 folds CV testing (outer loop) ----
 GBM_result <- data.frame(matrix(ncol=4, nrow=0))
 colnames(GBM_result) = c('Accuracy', 'Precision', 'Recall', 'F1')
-for (i in 1:10){
-  train <- resort_GBM[-folds[[i]],] 
-  test <- resort_GBM[folds[[i]],] 
+for (i in 1:5){
+  print(i)
+  train <- resort_GBM[-CV2.outer_folds[[i]],] 
+  test <- resort_GBM[CV2.outer_folds[[i]],] 
   
   GBM <- gbm(is_canceled~., data=train, distribution="bernoulli", n.trees=500, shrinkage=0.02, 
              n.minobsinnode=80, bag.fraction=0.4, verbose=FALSE)
   # summary(GBM) #compute relative inference of each variable
   
   GBM.pred <- predict.gbm(GBM, test, type='response', verbose=FALSE)
-  GBM.pred[GBM.pred < 0.35] <- 0
-  GBM.pred[GBM.pred >= 0.35] <- 1
+  GBM.pred[GBM.pred < 0.5] <- 0
+  GBM.pred[GBM.pred >= 0.5] <- 1
   GBM.pred <- factor(GBM.pred, levels = c(1,0))
   
   test$is_canceled <- factor(test$is_canceled, levels = c(1,0))
