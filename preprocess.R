@@ -10,7 +10,8 @@ preprocess <- function(one_hot = TRUE, feature_select = TRUE){
                                                      previous_cancellations/(previous_cancellations+
                                                                                previous_bookings_not_canceled)
                                                    ),
-           stays_in_nights = stays_in_week_nights + stays_in_weekend_nights) %>% 
+           stays_in_nights = stays_in_week_nights + stays_in_weekend_nights,
+           is_repeated_guest = factor(is_repeated_guest)) %>% 
     na.omit() %>% 
     mutate_if(is.character, as.factor)
   
@@ -26,7 +27,7 @@ preprocess <- function(one_hot = TRUE, feature_select = TRUE){
   if (one_hot){
     dummy <- dummyVars(" ~ .", data=hotel_all)
     hotel_all <- data.frame(predict(dummy, newdata=hotel_all))
-    hotel_all$is_canceled <- as.factor(hotel_all$is_canceled )
+    hotel_all <- hotel_all %>% mutate(is_canceled = factor(is_canceled, levels=c(1,0)))
     resort <- hotel_all %>% 
       filter(hotel.Resort.Hotel == 1) %>% 
       select(-hotel.City.Hotel, -hotel.Resort.Hotel)
@@ -34,7 +35,7 @@ preprocess <- function(one_hot = TRUE, feature_select = TRUE){
       filter(hotel.City.Hotel == 1) %>% 
       select(-hotel.City.Hotel, -hotel.Resort.Hotel)
   }else{
-    hotel_all$is_canceled <- factor(hotel_all$is_canceled, levels=c(1,0))
+    hotel_all <- hotel_all %>% mutate(is_canceled = factor(is_canceled, levels=c(1,0)))
     resort <- hotel_all %>% 
       filter(hotel == 'Resort Hotel') %>% 
       select(-hotel)
