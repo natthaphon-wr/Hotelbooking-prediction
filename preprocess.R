@@ -19,9 +19,11 @@ preprocess <- function(one_hot = TRUE, feature_select = TRUE){
     hotel_all <- hotel_all %>% 
       select(hotel, is_canceled, adr, adults, arrival_date_week_number, babies,
              booking_changes, children, customer_type, days_in_waiting_list,
-             distribution_channel, is_repeated_guest, lead_time, market_segment,
-             meal, previous_cancellation_ratio, required_car_parking_spaces,
-             stays_in_nights, total_of_special_requests) 
+             is_repeated_guest, lead_time, market_segment,
+             previous_cancellation_ratio, required_car_parking_spaces,
+             stays_in_nights, total_of_special_requests,             
+             meal, distribution_channel
+             ) 
   }
     
   if (one_hot){

@@ -22,7 +22,6 @@ resort_cat <- data_cat[[2]]
 city_cat <- data_cat[[3]]
 summary(hotel_cat)
 
-
 # Plot all features ----
 data_all <- preprocess(one_hot = FALSE, feature_select = FALSE)
 hotels_all <- data_all[[1]]
@@ -30,13 +29,8 @@ resort_all <- data_all[[2]]
 city_all <- data_all[[3]]
 summary(hotels_all)
 
-ggplot(hotels_all) +
-  geom_histogram(aes(x = lead_time, fill = is_canceled), binwidth = 50, position = 'dodge') 
-ggplot(resort_all) +
-  geom_histogram(aes(x = lead_time, fill = is_canceled), binwidth = 50, position = 'dodge') 
-ggplot(city_all) +
-  geom_histogram(aes(x = lead_time, fill = is_canceled), binwidth = 50, position = 'dodge') 
 
+## Categorical data ----
 ggplot(hotels_all) +
   geom_bar(aes(x = arrival_date_year))
 
@@ -45,13 +39,47 @@ ggplot(hotels_all) +
 ggplot(hotels_all) +
   geom_bar(aes(x = arrival_date_month, fill = hotel), position = 'dodge')
 
+
+### customer_type ----
+summary(hotels_all$customer_type)
+ggplot(hotels_all) +
+  geom_bar(aes(x = customer_type, fill = is_canceled))
+
+### market_segment ----
+summary(hotels_all$market_segment)
+ggplot(hotels_all) +
+  geom_bar(aes(x = market_segment, fill = is_canceled))
+
+### distribution_channel ----
+summary(hotels_all$distribution_channel)
+ggplot(hotels_all) +
+  geom_bar(aes(x = distribution_channel, fill = is_canceled))
+
+### meal ----
+summary(hotels_all$meal)
+ggplot(hotels_all) +
+  geom_bar(aes(x = meal, fill = is_canceled))
+
+
+
+## Numerical data ----
+ggplot(hotels_all) +
+  geom_histogram(aes(x = lead_time, fill = is_canceled), binwidth = 50, position = 'dodge') 
+ggplot(resort_all) +
+  geom_histogram(aes(x = lead_time, fill = is_canceled), binwidth = 50, position = 'dodge') 
+ggplot(city_all) +
+  geom_histogram(aes(x = lead_time, fill = is_canceled), binwidth = 50, position = 'dodge') 
+ggplot(hotels_all) +
+  geom_histogram(aes(x = lead_time, fill = is_canceled))
+ggplot(resort_all) +
+  geom_boxplot(aes(x = lead_time, y = is_canceled))
+
 ggplot(hotels_all) +
   geom_bar(aes(x = arrival_date_week_number))
 ggplot(hotels_all) +
   geom_bar(aes(x = arrival_date_week_number, fill = is_canceled), position = 'stack') 
 ggplot(hotels_all) +
   geom_bar(aes(x = arrival_date_week_number, fill = hotel), position = 'dodge')
-
 
 ggplot(hotels_all) +
   geom_boxplot(aes(y = stays_in_week_nights, x = hotel))
@@ -69,11 +97,6 @@ ggplot(hotels_all) +
 
 ggplot(hotels_all) +
   geom_histogram(aes(x = adr))
-
-ggplot(hotels_all) +
-  geom_histogram(aes(x = lead_time, fill = is_canceled))
-ggplot(resort_all) +
-  geom_boxplot(aes(x = lead_time, y = is_canceled))
 
 ggplot(hotels_all) +
   geom_bar(aes(x = required_car_parking_spaces, fill = is_canceled))

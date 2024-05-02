@@ -1,5 +1,9 @@
 source('preprocess.R')
 source('onehot_encode.R')
+source('rf_tuning.R')
+source('gbm_tuning.R')
+source('catb_tuning.R')
+
 library(tree)
 library(tidyverse) 
 library(caret)
@@ -13,13 +17,15 @@ library(themis)
 
 
 # 1. Import data ----
-## Not 1 hot encoding ----
+
+## 1.1 Not one hot encoding ----
 hotel_data <- preprocess(one_hot = FALSE, feature_select = TRUE)
 resort <- hotel_data[[2]]
 sapply(resort, class)
 summary(resort$is_canceled)
 
-## 1 hot encoding ----
+
+## 1.2 One hot encoding ----
 hotel_data_1hot <- preprocess(one_hot = TRUE, feature_select = TRUE)
 resort_1hot <- hotel_data_1hot[[2]]
 sapply(resort_1hot, class)
@@ -29,150 +35,84 @@ summary(resort_1hot$is_canceled)
 # 2. Outer loop splitting ----
 outer_folds <- createFolds(resort$is_canceled, k=5)
 
-
-# 3 Decision Tree ----
-DT_result <- data.frame(matrix(ncol=4, nrow=0))
-colnames(DT_result) = c('Accuracy', 'Precision', 'Recall', 'F1')
-for (i in 1:5){
-  print(i)
-  train <- resort[-outer_folds[[i]],] 
-  train_balance <- smotenc(train, var = 'is_canceled', k = 5, over_ratio = 1)
-  train_balance <- onehot_encode(train_balance)
-  test <- resort[outer_folds[[i]],] 
-  test <- onehot_encode(test)
-  
-  trees <- tree(is_canceled~., data=train_balance, split=c("deviance", "gini"))
-  # summary(trees)
-  
-  cv.trees <- cv.tree(trees, FUN=prune.misclass, K=5)
-  prune.trees <- prune.misclass(trees, best=cv.trees$size[which.min(cv.trees$dev)])
-  # plot(cv.trees)
-  # plot(prune.trees)
-  # text(prune.trees, pretty=1)
-  
-  tree.pred <- predict(prune.trees, test, type='class')
-  CM <- confusionMatrix(tree.pred, test$is_canceled)
-  DT_result[nrow(DT_result)+1, ] = c(CM$overall['Accuracy'], CM$byClass['Precision'],
-                                     CM$byClass['Recall'], CM$byClass['F1'])
-}
-colMeans(DT_result)
-write.csv(DT_result, ".\\result\\DT_resort_Evaluation.csv", row.names=FALSE)
-summary(prune.trees)$used
-
-
-# 4 Random forest ----
+# 3 Random forest ----
 # Parameters Tuning
 #   - ntree = no.of trees (row samples size = nrow(train))
 #   - mtry = no. features that samples
 #   - nodesize  = min size of terminal nodes
 
-## 4.1 Tune ntree ----
-RF_ntree <- data.frame(matrix(ncol=6, nrow=0))
-colnames(RF_ntree) = c('ntree', 'fold', 'Accuracy', 'Precision', 'Recall', 'F1')
-for (n in seq(100, 500, 200)){
-  for (i in 1:5){
-    print(paste(n, i))
-    train <- resort[-outer_folds[[i]],]
-    train_idx <- createDataPartition(train$is_canceled, p=0.7, list = FALSE)
-    train_inner <- train[train_idx , ]
-    train_inner_balance <- smotenc(train_inner, var = 'is_canceled', k = 5, over_ratio = 1)
-    train_inner_balance <- onehot_encode(train_inner_balance)
-    val_inner  <- train[-train_idx, ]
-    val_inner <- onehot_encode(val_inner)
-    
-    RF <- randomForest(is_canceled~., data=train_inner_balance, ntree=n, mtry=10, nodesize=1)
-    RF.pred <- predict(RF, val_inner, type='response')
-    RF_CM <- confusionMatrix(RF.pred, val_inner$is_canceled)
-    RF_ntree[nrow(RF_ntree)+1, ] = c(n, i,
-                                       RF_CM$overall['Accuracy'], RF_CM$byClass['Precision'],
-                                       RF_CM$byClass['Recall'], RF_CM$byClass['F1'])
-  }
-}
-write.csv(RF_ntree, ".\\result\\RF_resort_ntree.csv", row.names=FALSE)
+## 3.1 Tune ntree ----
+RF_ntree_params <- list(ntree = seq(100, 500, 200),
+                        mtry = 20,
+                        nodesize = 1)
+RF_ntree <- rf_tuning(data = resort, 
+                      outer_folds = outer_folds, 
+                      Ntree = RF_ntree_params$ntree, 
+                      Mtry = RF_ntree_params$mtry, 
+                      Nodesize = RF_ntree_params$nodesize, 
+                      param = 'ntree')
 RF_ntree %>% 
   group_by(ntree) %>% 
   summarise(AVG_accuracy = mean(Accuracy),
             AVG_precision = mean(Precision),
             AVG_recall = mean(Recall),
             AVG_F1 = mean(F1))
-  
-## 4.2 Tune mtry  ----
-RF_mtry <- data.frame(matrix(ncol=6, nrow=0))
-colnames(RF_mtry) = c('mtry', 'fold', 'Accuracy', 'Precision', 'Recall', 'F1')
-for (n in c(5, 10, 20, 30)){
-  for (i in 1:5){
-    print(paste(n, i))
-    train <- resort[-outer_folds[[i]],]
-    train_idx <- createDataPartition(train$is_canceled, p=0.7, list = FALSE)
-    train_inner <- train[train_idx , ]
-    train_inner_balance <- smotenc(train_inner, var = 'is_canceled', k = 5, over_ratio = 1)
-    train_inner_balance <- onehot_encode(train_inner_balance)
-    val_inner  <- train[-train_idx, ]
-    val_inner <- onehot_encode(val_inner)
-    
-    RF <- randomForest(is_canceled~., data=train_inner_balance, ntree=500, mtry=n, nodesize=1)
-    RF.pred <- predict(RF, val_inner, type='response')
-    RF_CM <- confusionMatrix(RF.pred, val_inner$is_canceled)
-    RF_mtry[nrow(RF_mtry)+1, ] = c(n, i,
-                                   RF_CM$overall['Accuracy'], RF_CM$byClass['Precision'],
-                                   RF_CM$byClass['Recall'], RF_CM$byClass['F1'])
-  }
-}
-write.csv(RF_mtry, ".\\result\\RF_resort_mtry.csv", row.names=FALSE)
+write.csv(RF_ntree, ".\\result\\RF_resort_ntree.csv", row.names=FALSE)
+
+
+## 3.2 Tune mtry  ----
+RF_mtry_params <- list(ntree = 500,
+                       mtry = c(5, 10, 15, 20, 25),
+                       nodesize = 1)
+RF_mtry <- rf_tuning(data = resort, 
+                     outer_folds = outer_folds, 
+                     Ntree = RF_mtry_params$ntree, 
+                     Mtry = RF_mtry_params$mtry, 
+                     Nodesize = RF_mtry_params$nodesize, 
+                     param = 'mtry')
 RF_mtry %>% 
   group_by(mtry) %>% 
   summarise(AVG_accuracy = mean(Accuracy),
             AVG_precision = mean(Precision),
             AVG_recall = mean(Recall),
             AVG_F1 = mean(F1))
+write.csv(RF_mtry, ".\\result\\RF_resort_mtry.csv", row.names=FALSE)
 
-## 4.3 Tune nodesize ----
-RF_nodesize <- data.frame(matrix(ncol=6, nrow=0))
-colnames(RF_nodesize) = c('nodesize', 'fold', 'Accuracy', 'Precision', 'Recall', 'F1')
-for (n in c(1, 5, 10, 20, 50)){
-  for (i in 1:5){
-    print(paste(n, i))
-    train <- resort[-outer_folds[[i]],]
-    train_idx <- createDataPartition(train$is_canceled, p=0.7, list = FALSE)
-    train_inner <- train[train_idx , ]
-    train_inner_balance <- smotenc(train_inner, var = 'is_canceled', k = 5, over_ratio = 1)
-    train_inner_balance <- onehot_encode(train_inner_balance)
-    val_inner  <- train[-train_idx, ]
-    val_inner <- onehot_encode(val_inner)
-    
-    RF <- randomForest(is_canceled~., data=train_inner_balance, ntree=500, mtry=20, nodesize=n)
-    RF.pred <- predict(RF, val_inner, type='response')
-    RF_CM <- confusionMatrix(RF.pred, val_inner$is_canceled)
-    RF_nodesize[nrow(RF_nodesize)+1, ] = c(n, i,
-                                           RF_CM$overall['Accuracy'], RF_CM$byClass['Precision'],
-                                           RF_CM$byClass['Recall'], RF_CM$byClass['F1'])
-  }
-}
-write.csv(RF_nodesize, ".\\result\\RF_resort_nodesize.csv", row.names=FALSE)
+
+## 3.3 Tune nodesize ----
+RF_nodesize_params <- list(ntree = 500,
+                           mtry = 20,
+                           nodesize = c(1, 5, 10))
+RF_nodesize <- rf_tuning(data = resort, 
+                         outer_folds = outer_folds, 
+                         Ntree = RF_nodesize_params$ntree, 
+                         Mtry = RF_nodesize_params$mtry, 
+                         Nodesize = RF_nodesize_params$nodesize, 
+                         param = 'nodesize')
 RF_nodesize %>% 
   group_by(nodesize) %>% 
   summarise(AVG_accuracy = mean(Accuracy),
             AVG_precision = mean(Precision),
             AVG_recall = mean(Recall),
             AVG_F1 = mean(F1))
+write.csv(RF_nodesize, ".\\result\\RF_resort_nodesize.csv", row.names=FALSE)
 
-## 4.4 Final RF model ----
+
+## 3.4 Final RF ----
 RF_result <- data.frame(matrix(ncol=4, nrow=0))
 colnames(RF_result) = c('Accuracy', 'Precision', 'Recall', 'F1')
 # RF_imp <- matrix(0, nrow = ncol(resort)-1, ncol=1)
 # rownames(RF_imp) <- colnames(resort %>% select(-is_canceled))
 # colnames(RF_imp) <- c('MeanDecreaseGini')
 
-### Test SMOTE-NC ----
 for (i in 1:5){
   print(i)
   train <- resort[-outer_folds[[i]],] 
-  train_balance <- smotenc(train, var = 'is_canceled', k = 5, over_ratio = 1)
-  train_balance <- onehot_encode(train_balance)
+  train <- onehot_encode(train)
   test <- resort[outer_folds[[i]],] 
   test <- onehot_encode(test)
   
-  RF <- randomForest(is_canceled~., data=train_balance, ntree=500, mtry=20, nodesize=1)
+  RF <- randomForest(is_canceled~., data=train, ntree=500, mtry=10, nodesize=10)
   # RF_imp <- RF_imp + importance(RF)
   
   RF.pred <- predict(RF, test, type='response')
@@ -184,35 +124,7 @@ colMeans(RF_result)
 write.csv(RF_result, ".\\result\\RF_resort_Evaluation.csv", row.names=FALSE)
 
 
-### Normal ----
-
-for (i in 1:5){
-  print(i)
-  train <- resort[-outer_folds[[i]],]
-  test <- resort[outer_folds[[i]],]
-
-  RF <- randomForest(is_canceled~., data=train, ntree=300, mtry=20, nodesize=1)
-  RF_imp <- RF_imp + importance(RF)
-
-  RF.pred <- predict(RF, test, type='response')
-  RF_CM <- confusionMatrix(RF.pred, test$is_canceled)
-  RF_result[nrow(RF_result)+1, ] = c(RF_CM$overall['Accuracy'], RF_CM$byClass['Precision'],
-                                     RF_CM$byClass['Recall'], RF_CM$byClass['F1'])
-}
-colMeans(RF_result)
-write.csv(RF_result, ".\\result\\RF_resort_Evaluation.csv", row.names=FALSE)
-
-# Feature importance
-RF_imp <- RF_imp/5
-RF_imp <- data.frame('MeanDecreaseGini' = RF_imp)
-RF_imp20 <- top_n(RF_imp, 20, MeanDecreaseGini)
-ggplot(RF_imp20, aes(y=reorder(rownames(RF_imp20), MeanDecreaseGini), x=MeanDecreaseGini)) +
-  geom_bar(stat = "identity") +
-  ylab('Features') +
-  ggtitle('Resort Hotel using Random Forest')
-write.csv(RF_imp, ".\\result\\RF_resort_FI.csv", row.names=FALSE)
-
-# 5. Gradient Boosting ----
+# 4. Gradient Boosting ----
 # Parameters Tuning
 #   - classification threshold 
 #   - n.trees = total no. of tree
@@ -221,163 +133,115 @@ write.csv(RF_imp, ".\\result\\RF_resort_FI.csv", row.names=FALSE)
 #   - bag.fraction = fraction of training set to be selected to build next tree
 
 ## GBM dataset ----
-resort_GBM <- resort
-resort_GBM$is_canceled <- unclass(resort_GBM$is_canceled)%%2 
+# resort_GBM <- resort
+# resort_GBM$is_canceled <- unclass(resort_GBM$is_canceled)%%2 
 
-## 5.1 Tuning n.trees and shrinkage -----
-GBM_tune1 <- data.frame(matrix(ncol=7, nrow=0))
-colnames(GBM_tune1) = c('n.trees', 'shrinkage', 'fold', 'Accuracy', 'Precision', 'Recall', 'F1')
-for (n in seq(300, 500, 200)){
-  for (lr in c(0.3, 0.4, 0.5)){
-    for (i in 1:5){
-      print(paste(n, lr, i))
-      train <- resort_GBM[-outer_folds[[i]],] 
-      train_idx <- createDataPartition(train$is_canceled, p=0.7, list=FALSE)
-      train_inner <- train[train_idx,]
-      val_inner <- train[-train_idx,]
-      
-      GBM <- gbm(is_canceled~., data=train_inner, distribution="bernoulli", n.trees=n, 
-                 n.minobsinnode=10, shrinkage=lr, bag.fraction=0.5, verbose=FALSE)
-      # summary(GBM) #compute relative inference of each variable
-      
-      GBM.pred <- predict.gbm(GBM, val_inner, type='response', verbose=FALSE)
-      GBM.pred[GBM.pred < 0.5] <- 0
-      GBM.pred[GBM.pred >= 0.5] <- 1
-      GBM.pred <- factor(GBM.pred, levels = c(1,0))
-      
-      val_inner$is_canceled <- factor(val_inner$is_canceled, levels = c(1,0))
-      GBM_CM <- confusionMatrix(GBM.pred, val_inner$is_canceled)
-      GBM_tune1[nrow(GBM_tune1)+1, ] = c(n, lr, i,
-                                         GBM_CM$overall['Accuracy'], GBM_CM$byClass['Precision'],
-                                         GBM_CM$byClass['Recall'], GBM_CM$byClass['F1'])
-    }
-  }
-}
-write.csv(GBM_tune1, ".\\result\\GBM_resort_ntreelr.csv", row.names=FALSE)
+## 4.1 Initial Tree,Tuning n.trees and shrinkage -----
+GBM_intit_params <- list(n.trees = c(500),
+                         shrinkage = c(0.1),
+                         n.minobsinnode = 150,
+                         bag.fraction = 1,
+                         threshold = 0.5)
+GBM_tune1 <- gbm_tuning(data = resort, 
+                        outer_folds = outer_folds, 
+                        Ntrees = GBM_intit_params$n.trees, 
+                        Shrinkage = GBM_intit_params$shrinkage, 
+                        Nminobsinnode = GBM_intit_params$n.minobsinnode,
+                        Bagfraction = GBM_intit_params$bag.fraction,
+                        Threshold = GBM_intit_params$threshold,
+                        param = 'initial')
+
 GBM_tune1 %>% 
   group_by(n.trees, shrinkage) %>% 
   summarise(AVG_accuracy = mean(Accuracy),
             AVG_precision = mean(Precision),
             AVG_recall = mean(Recall),
             AVG_F1 = mean(F1))
+write.csv(GBM_tune1, ".\\result\\GBM_resort_ntreelr.csv", row.names=FALSE)
 
-## 5.2 Tuning n.minobsinnode -----
-GBM_tune2 <- data.frame(matrix(ncol=6, nrow=0))
-colnames(GBM_tune2) = c('n.minobsinnode', 'fold', 'Accuracy', 'Precision', 'Recall', 'F1')
-for (nmin in c(50, 100, 150, 200)){
-  for (i in 1:5){
-    print(paste(nmin, i))
-    train <- resort_GBM[-outer_folds[[i]],] 
-    train_idx <- createDataPartition(train$is_canceled, p=0.7, list=FALSE)
-    train_inner <- train[train_idx,]
-    val_inner <- train[-train_idx,]
-    
-    GBM <- gbm(is_canceled~., data=train_inner, distribution="bernoulli", n.trees=500, 
-               n.minobsinnode=nmin, shrinkage=0.2, bag.fraction=0.5, verbose=FALSE)
-    # summary(GBM) #compute relative inference of each variable
-    
-    GBM.pred <- predict.gbm(GBM, val_inner, type='response', verbose=FALSE)
-    GBM.pred[GBM.pred < 0.5] <- 0
-    GBM.pred[GBM.pred >= 0.5] <- 1
-    GBM.pred <- factor(GBM.pred, levels = c(1,0))
-    
-    val_inner$is_canceled <- factor(val_inner$is_canceled, levels = c(1,0))
-    GBM_CM <- confusionMatrix(GBM.pred, val_inner$is_canceled)
-    GBM_tune2[nrow(GBM_tune2)+1, ] = c(nmin, i,
-                                       GBM_CM$overall['Accuracy'], GBM_CM$byClass['Precision'],
-                                       GBM_CM$byClass['Recall'], GBM_CM$byClass['F1'])
-  }
-}
-write.csv(GBM_tune2, ".\\result\\GBM_resort_nmins.csv", row.names=FALSE)
+
+## 4.2 Tuning n.minobsinnode -----
+GBM_nmin_params <- list(n.trees = 500,
+                         shrinkage = 0.2,
+                         n.minobsinnode = c(50, 100, 150, 200),
+                         bag.fraction = 1,
+                         threshold = 0.5)
+GBM_tune2 <- rf_tuning(data = resort_GBM, 
+                       outer_folds = outer_folds, 
+                       Ntrees = GBM_nmin_params$n.trees, 
+                       Shrinkage = GBM_nmin_params$shrinkage, 
+                       Nminobsinnode = GBM_nmin_params$n.minobsinnode,
+                       Bagfraction = GBM_nmin_params$bag.fraction,
+                       Threshold = GBM_nmin_params$threshold,
+                       param = 'n.minobsinnode')
 GBM_tune2 %>% 
-  group_by(n.minobsinnode) %>% 
+  group_by(n.minobsinnodee) %>% 
   summarise(AVG_accuracy = mean(Accuracy),
             AVG_precision = mean(Precision),
             AVG_recall = mean(Recall),
             AVG_F1 = mean(F1))
+write.csv(GBM_tune2, ".\\result\\GBM_resort_nmin.csv", row.names=FALSE)
 
 
-## 5.3 Tuning bag.fraction ----
-GBM_tuning3 <- data.frame(matrix(ncol=6, nrow=0))
-colnames(GBM_tuning3) = c('bag.fraction', 'fold', 'Accuracy', 'Precision', 'Recall', 'F1')
-for (bf in seq(0.2, 1, 0.2)){
-  for (i in 1:5){
-    print(paste(bf, i))
-    train <- resort_GBM[-outer_folds[[i]],] 
-    train_idx <- createDataPartition(train$is_canceled, p=0.7, list=FALSE)
-    train_inner <- train[train_idx,]
-    val_inner <- train[-train_idx,]
-    
-    GBM <- gbm(is_canceled~., data=train_inner, distribution="bernoulli", n.trees=500, 
-               shrinkage=0.2, n.minobsinnode=150, bag.fraction=bf, verbose=FALSE)
-    # summary(GBM) #compute relative inference of each variable
-    
-    GBM.pred <- predict.gbm(GBM, val_inner, type='response', verbose=FALSE)
-    GBM.pred[GBM.pred < 0.5] <- 0
-    GBM.pred[GBM.pred >= 0.5] <- 1
-    GBM.pred <- factor(GBM.pred, levels = c(1,0))
-    
-    val_inner$is_canceled <- factor(val_inner$is_canceled, levels = c(1,0))
-    GBM_CM <- confusionMatrix(GBM.pred, val_inner$is_canceled)
-    GBM_tuning3[nrow(GBM_tuning3)+1, ] = c(bf, i, 
-                                         GBM_CM$overall['Accuracy'], GBM_CM$byClass['Precision'],
-                                         GBM_CM$byClass['Recall'], GBM_CM$byClass['F1'])
-  }
-}
-write.csv(GBM_tuning3, ".\\result\\GBM_resort_bagfrac.csv", row.names=FALSE)
-GBM_tuning3 %>% 
+## 4.3 Tuning bag.fraction ----
+GBM_bagfrac_params <- list(n.trees = 500,
+                        shrinkage = 0.2,
+                        n.minobsinnode = 150,
+                        bag.fraction = c(0.4, 0.6, 0.8, 1),
+                        threshold = 0.5)
+GBM_tune3 <- rf_tuning(data = resort_GBM, 
+                       outer_folds = outer_folds, 
+                       Ntrees = GBM_bagfrac_params$n.trees, 
+                       Shrinkage = GBM_bagfrac_params$shrinkage, 
+                       Nminobsinnode = GBM_bagfrac_params$n.minobsinnode,
+                       Bagfraction = GBM_bagfrac_params$bag.fraction,
+                       Threshold = GBM_bagfrac_params$threshold,
+                       param = 'bag.fraction')
+GBM_tune3 %>% 
   group_by(bag.fraction) %>% 
   summarise(AVG_accuracy = mean(Accuracy),
             AVG_precision = mean(Precision),
             AVG_recall = mean(Recall),
             AVG_F1 = mean(F1))
+write.csv(GBM_tune3, ".\\result\\GBM_resort_bagfrac.csv", row.names=FALSE)
 
 
-## 5.4 Tuning classify threshold -----
-GBM_tuning4 <- data.frame(matrix(ncol=6, nrow=0))
-colnames(GBM_tuning4) = c('threshold', 'fold', 'Accuracy', 'Precision', 'Recall', 'F1')
-for (thresh in seq(0.3, 0.7, 0.1)){
-  for (i in 1:5){
-    print(paste(thresh, i))
-    train <- resort_GBM[-outer_folds[[i]],] 
-    train_idx <- createDataPartition(train$is_canceled, p=0.7, list=FALSE)
-    train_inner <- train[train_idx,]
-    val_inner <- train[-train_idx,]
-    
-    GBM <- gbm(is_canceled~., data=train_inner, distribution="bernoulli", n.trees=500, 
-               shrinkage=0.2, n.minobsinnode=150, bag.fraction=1, verbose=FALSE)
-    # summary(GBM) #compute relative inference of each variable
-    
-    GBM.pred <- predict.gbm(GBM, val_inner, type='response', verbose=FALSE)
-    GBM.pred[GBM.pred < thresh] <- 0
-    GBM.pred[GBM.pred >= thresh] <- 1
-    GBM.pred <- factor(GBM.pred, levels = c(1,0))
-    
-    val_inner$is_canceled <- factor(val_inner$is_canceled, levels = c(1,0))
-    GBM_CM <- confusionMatrix(GBM.pred, val_inner$is_canceled)
-    GBM_tuning4[nrow(GBM_tuning4)+1, ] = c(thresh, i, 
-                                           GBM_CM$overall['Accuracy'], GBM_CM$byClass['Precision'],
-                                           GBM_CM$byClass['Recall'], GBM_CM$byClass['F1'])
-  }
-}
-write.csv(GBM_tuning4, ".\\result\\GBM_resort_threshold.csv", row.names=FALSE)
-GBM_tuning4 %>% 
+## 4.4 Tuning classify threshold -----
+GBM_theshold_params <- list(n.trees = 500,
+                           shrinkage = 0.2,
+                           n.minobsinnode = 150,
+                           bag.fraction = 1,
+                           threshold = c(0.4, 0.5, 0.6))
+GBM_tune4 <- rf_tuning(data = resort_GBM, 
+                       outer_folds = outer_folds, 
+                       Ntrees = GBM_theshold_params$n.trees, 
+                       Shrinkage = GBM_theshold_params$shrinkage, 
+                       Nminobsinnode = GBM_theshold_params$n.minobsinnode,
+                       Bagfraction = GBM_theshold_params$bag.fraction,
+                       Threshold = GBM_theshold_params$threshold,
+                       param = 'bag.fraction')
+GBM_tune4 %>% 
   group_by(threshold) %>% 
   summarise(AVG_accuracy = mean(Accuracy),
             AVG_precision = mean(Precision),
             AVG_recall = mean(Recall),
             AVG_F1 = mean(F1))
+write.csv(GBM_tune4, ".\\result\\GBM_resort_theshold.csv", row.names=FALSE)
 
-## 5.5 Final GBM ----
+## 4.5 Final GBM ----
 GBM_result <- data.frame(matrix(ncol=4, nrow=0))
 colnames(GBM_result) = c('Accuracy', 'Precision', 'Recall', 'F1')
 for (i in 1:5){
   print(i)
-  train <- resort_GBM[-outer_folds[[i]],] 
-  test <- resort_GBM[outer_folds[[i]],] 
+  train <- resort[-outer_folds[[i]],] 
+  train <- onehot_encode(train)
+  train$is_canceled <- unclass(train$is_canceled)%%2 
+  test <- resort[outer_folds[[i]],] 
+  test <- onehot_encode(test)
+  test$is_canceled <- unclass(test$is_canceled)%%2 
   
-  GBM <- gbm(is_canceled~., data=train, distribution="bernoulli", n.trees=500, shrinkage=0.2, 
-             n.minobsinnode=150, bag.fraction=1, verbose=FALSE)
+  GBM <- gbm(is_canceled~., data=train, distribution="bernoulli", n.trees=500, 
+             shrinkage=0.2, n.minobsinnode=150, bag.fraction=1, verbose=FALSE)
   # summary(GBM) #compute relative inference of each variable
   
   GBM.pred <- predict.gbm(GBM, test, type='response', verbose=FALSE)
@@ -390,12 +254,11 @@ for (i in 1:5){
   GBM_result[nrow(GBM_result)+1, ] = c(GBM_CM$overall['Accuracy'], GBM_CM$byClass['Precision'],
                                        GBM_CM$byClass['Recall'], GBM_CM$byClass['F1'])
 }
-write.csv(GBM_result, ".\\result\\GBM_resort_Evaluation.csv", row.names=FALSE)
 GBM_result
 colMeans(GBM_result)
+write.csv(GBM_result, ".\\result\\GBM_resort_Evaluation.csv", row.names=FALSE)
 
-
-# 6. XGBoost ----
+# 5. XGBoost ----
 # Parameters Tuning
 #   - eta = learning rate
 #   - nrounds = max no. of boosting iterations
@@ -410,7 +273,7 @@ resort_xgb <- resort
 resort_xgb$is_canceled <- unclass(resort_xgb$is_canceled)%%2
 xgb_trainCtr = trainControl(method = "LGOCV", p = 0.7, number = 1, search = "grid")
 
-## 6.1 Initial nrounds and learning rate ----
+## 5.1 Initial nrounds and learning rate ----
 xgbGrid1 <-  expand.grid(eta = c(0.01, 0.1, 0.2, 0.3), 
                          nrounds = c(100, 300, 500),
                          # fixed values below
@@ -440,7 +303,7 @@ write.csv(XGB_tune1, ".\\result\\XGB_resort_etanrounds.csv", row.names=FALSE)
 XGB_tune1
 
 
-## 6.2 Tune max_depth, min_child_weight ----
+## 5.2 Tune max_depth, min_child_weight ----
 xgbGrid2 <-  expand.grid(max_depth = c(5, 10, 15),
                          min_child_weight = c(1, 5, 10),
                          # fixed values below
@@ -469,7 +332,7 @@ for (i in 1:5){
 write.csv(XGB_tune2, ".\\result\\XGB_resort_depth.csv", row.names=FALSE)
 XGB_tune2
 
-## 6.3 Tune gamma ----
+## 5.3 Tune gamma ----
 xgbGrid3 <-  expand.grid(gamma = c(0, 0.01, 0.1, 0.2),
                          # fixed values below
                          eta = 0.1,
@@ -497,7 +360,7 @@ for (i in 1:5){
 write.csv(XGB_tune3, ".\\result\\XGB_resort_gamma.csv", row.names=FALSE)
 XGB_tune3
 
-## 6.4 Tune subsample and colsample_bytree ----
+## 5.4 Tune subsample and colsample_bytree ----
 xgbGrid4 <-  expand.grid(colsample_bytree = c(0.7, 0.9, 1), 
                          subsample = c(0.7, 0.9, 1),
                          # fixed values below
@@ -525,7 +388,7 @@ for (i in 1:5){
 write.csv(XGB_tune4, ".\\result\\XGB_resort_sample.csv", row.names=FALSE)
 XGB_tune4
 
-## 6.5 Tune classification threshold ----
+## 5.5 Tune classification threshold ----
 xgb_params <- list(eta = 0.1, 
                    gamma = 0.1, 
                    max_depth = 15, 
@@ -571,7 +434,7 @@ xgb_threshold %>%
             AVG_F1 = mean(F1))
 write.csv(xgb_threshold, ".\\result\\XGB_resort_threshold.csv", row.names=FALSE)
 
-## 6.6 Final result ----
+## 5.6 Final result ----
 xgb_params <- list(eta = 0.1, 
                    gamma = 0.1, 
                    max_depth = 15, 
@@ -631,12 +494,10 @@ ggplot(XGB_imp20, aes(y=reorder(Feature, MeansGain), x=MeansGain)) +
 write.csv(XGB_imp, ".\\result\\XGB_resort_FI.csv", row.names=FALSE)
 
 
-# 7. LightGBM ----
-
+# 6. LightGBM ----
 # Fixed parameters
 #   - objective = 'binary'
 #   - data_sample_strategy = 'goss'
-
 # 1. Boosting: gbdt
 #   - boosting = 'gbdt'
 #   - num_iterations
@@ -648,7 +509,6 @@ write.csv(XGB_imp, ".\\result\\XGB_resort_FI.csv", row.names=FALSE)
 #   - other_rate
 #   - lambda_l1 
 #   - lambda_l2
-
 # 2. Boosting: dart
 #   - boosting = 'dart'
 #   - num_iterations
@@ -676,219 +536,14 @@ write.csv(XGB_imp, ".\\result\\XGB_resort_FI.csv", row.names=FALSE)
 ## LGB dataset ----
 resort_lgbm <- resort
 resort_lgbm$is_canceled <- unclass(resort_lgbm$is_canceled)%%2
-
-## 7.1 Boosting: gbdt ----
-### 7.1.1 Initial tree ----
-# num_iterations, learning_rate, num_leaves
-lgbmGrid1 <- expand.grid(num_iterations = c(500),
-                         learning_rate = c(0.01, 0.1),
-                         num_leaves = c(100, 250))
-lgbm_tune1 <- data.frame(matrix(ncol=5, nrow=0))
-colnames(lgbm_tune1) = c('fold', 'num_iterations', 'learning_rate', 'num_leaves', 'binary_logloss')
-
-for (i in 1:5){
-  print(i)
-  train <- resort_lgbm[-outer_folds[[i]],] 
-  train_idx <- createDataPartition(train$is_canceled, p=0.7, list=FALSE)
-  train_inner <- train[train_idx,]
-  val_inner <- train[-train_idx,]
-  
-  dtrain <- lgb.Dataset(as.matrix(sapply(train_inner %>% select(-is_canceled), as.numeric)),
-                        label=train_inner$is_canceled)
-  dval <- lgb.Dataset.create.valid(dataset = dtrain, 
-                                   data = as.matrix(sapply(val_inner %>% select(-is_canceled), as.numeric)), 
-                                   label = val_inner$is_canceled)
-  valids <- list(test = dval)
-  
-  model <- list()
-  loss <- numeric(nrow(lgbmGrid1))
-  for (j in 1:nrow(lgbmGrid1)){
-    model[[j]] <- lgb.train(params = list(num_iterations = lgbmGrid1[j, 'num_iterations'],
-                                          learning_rate = lgbmGrid1[j, 'learning_rate'],
-                                          num_leaves = lgbmGrid1[j, 'num_leaves'],
-                                          # fixed value below
-                                          objective = 'binary', 
-                                          data_sample_strategy = 'goss',
-                                          boosting = 'gbdt', 
-                                          min_data_in_leaf = 20, 
-                                          feature_fraction = 1,
-                                          top_rate = 0.2, 
-                                          other_rate = 0.1,
-                                          lambda_l1 = 0, 
-                                          lambda_l2 = 0
-                                          ),
-                            data = dtrain,
-                            valids = valids,
-                            verbose = 0
-                            )
-    loss[j] <- min(rbindlist(model[[j]]$record_evals$test$binary_logloss))
-  }
-  lgbm_tune1[nrow(lgbm_tune1)+1, ] = c(i,
-                                       lgbmGrid1[which.min(loss), "num_iterations"],
-                                       lgbmGrid1[which.min(loss), "learning_rate"],
-                                       lgbmGrid1[which.min(loss), "num_leaves"],
-                                       min(loss))
-  print(lgbm_tune1[i,])  
-}
-lgbm_tune1
-write.csv(lgbm_tune1, ".\\result\\LGBM_resort_etantree.csv", row.names=FALSE)
-
-### 7.1.2 Tuning tree parameters ----
-# min_data_in_leaf
-lgbmGrid2 <- expand.grid(min_data_in_leaf = c(1, 10))
-lgbm_tune2 <- data.frame(matrix(ncol=3, nrow=0))
-colnames(lgbm_tune2) = c('fold', 'min_data_in_leaf', 'binary_logloss')
-
-for (i in 1:5){
-  print(i)
-  train <- resort_lgbm[-outer_folds[[i]],] 
-  train_idx <- createDataPartition(train$is_canceled, p=0.7, list=FALSE)
-  train_inner <- train[train_idx,]
-  val_inner <- train[-train_idx,]
-  
-  dtrain <- lgb.Dataset(as.matrix(sapply(train_inner %>% select(-is_canceled), as.numeric)),
-                        label=train_inner$is_canceled)
-  dval <- lgb.Dataset.create.valid(dataset = dtrain, 
-                                   data = as.matrix(sapply(val_inner %>% select(-is_canceled), as.numeric)), 
-                                   label = val_inner$is_canceled)
-  valids <- list(test = dval)
-  
-  model <- list()
-  loss <- numeric(nrow(lgbmGrid2))
-  for (j in 1:nrow(lgbmGrid2)){
-    model[[j]] <- lgb.train(params = list(min_data_in_leaf = lgbmGrid2[j, 'min_data_in_leaf'], 
-                                          # fixed value below
-                                          num_iterations = 500,
-                                          learning_rate = 0.01,
-                                          num_leaves = 250,
-                                          objective = 'binary', 
-                                          data_sample_strategy = 'goss',
-                                          boosting = 'gbdt',
-                                          feature_fraction = 1,
-                                          top_rate = 0.2, 
-                                          other_rate = 0.1,
-                                          lambda_l1 = 0, 
-                                          lambda_l2 = 0),
-                            data = dtrain,
-                            valids = valids,
-                            verbose = 0)
-    loss[j] <- min(rbindlist(model[[j]]$record_evals$test$binary_logloss))
-  }
-  lgbm_tune2[nrow(lgbm_tune2)+1, ] = c(i,
-                                       lgbmGrid2[which.min(loss), "min_data_in_leaf"],
-                                       min(loss))
-  print(lgbm_tune2[i,])  
-}
-lgbm_tune2
-write.csv(lgbm_tune2, ".\\result\\LGBM_resort_mindataleaf.csv", row.names=FALSE)
-
-### 7.1.3 Tuning feature_fraction ----
-# feature_fraction
-lgbmGrid3 <- expand.grid(feature_fraction = c(1, 10))
-lgbm_tune3 <- data.frame(matrix(ncol=3, nrow=0))
-colnames(lgbm_tune3) = c('fold', 'feature_fraction', 'binary_logloss')
-
-for (i in 1:5){
-  print(i)
-  train <- resort_lgbm[-outer_folds[[i]],] 
-  train_idx <- createDataPartition(train$is_canceled, p=0.7, list=FALSE)
-  train_inner <- train[train_idx,]
-  val_inner <- train[-train_idx,]
-  
-  dtrain <- lgb.Dataset(as.matrix(sapply(train_inner %>% select(-is_canceled), as.numeric)),
-                        label=train_inner$is_canceled)
-  dval <- lgb.Dataset.create.valid(dataset = dtrain, 
-                                   data = as.matrix(sapply(val_inner %>% select(-is_canceled), as.numeric)), 
-                                   label = val_inner$is_canceled)
-  valids <- list(test = dval)
-  
-  model <- list()
-  loss <- numeric(nrow(lgbmGrid3))
-  for (j in 1:nrow(lgbmGrid3)){
-    model[[j]] <- lgb.train(params = list(feature_fraction = lgbmGrid3[j, 'feature_fraction'],
-                                          # fixed value below
-                                          num_iterations = 500,
-                                          learning_rate = 0.01,
-                                          num_leaves = 250,
-                                          objective = 'binary', 
-                                          data_sample_strategy = 'goss',
-                                          boosting = 'gbdt',
-                                          min_data_in_leaf = , 
-                                          top_rate = 0.2, 
-                                          other_rate = 0.1,
-                                          lambda_l1 = 0, 
-                                          lambda_l2 = 0),
-                            data = dtrain,
-                            valids = valids,
-                            verbose = 0)
-    loss[j] <- min(rbindlist(model[[j]]$record_evals$test$binary_logloss))
-  }
-  lgbm_tune3[nrow(lgbm_tune3)+1, ] = c(i,
-                                       lgbmGrid3[which.min(loss), "feature_fraction"],
-                                       min(loss))
-  print(lgbm_tune3[i,])  
-}
-lgbm_tune3
-write.csv(lgbm_tune3, ".\\result\\LGBM_resort_featfrac.csv", row.names=FALSE)
-
-### 7.1.4 Tuning goss rates ----
-# top_rate, other_rate 
-lgbmGrid4 <- expand.grid(top_rate = c(),
-                         other_rate = c())
-lgbm_tune4 <- data.frame(matrix(ncol=4, nrow=0))
-colnames(lgbm_tune4) = c('fold', 'top_rate', 'other_rate', 'binary_logloss')
-
-for (i in 1:5){
-  print(i)
-  train <- resort_lgbm[-outer_folds[[i]],] 
-  train_idx <- createDataPartition(train$is_canceled, p=0.7, list=FALSE)
-  train_inner <- train[train_idx,]
-  val_inner <- train[-train_idx,]
-  
-  dtrain <- lgb.Dataset(as.matrix(sapply(train_inner %>% select(-is_canceled), as.numeric)),
-                        label=train_inner$is_canceled)
-  dval <- lgb.Dataset.create.valid(dataset = dtrain, 
-                                   data = as.matrix(sapply(val_inner %>% select(-is_canceled), as.numeric)), 
-                                   label = val_inner$is_canceled)
-  valids <- list(test = dval)
-  
-  model <- list()
-  loss <- numeric(nrow(lgbmGrid4))
-  for (j in 1:nrow(lgbmGrid4)){
-    model[[j]] <- lgb.train(params = list(top_rate = lgbmGrid4[which.min(loss), "top_rate"], 
-                                          other_rate = lgbmGrid4[which.min(loss), "other_rate"],
-                                          # fixed value below
-                                          num_iterations = 500,
-                                          learning_rate = 0.01,
-                                          num_leaves = 250,
-                                          objective = 'binary', 
-                                          data_sample_strategy = 'goss',
-                                          boosting = 'gbdt',
-                                          min_data_in_leaf = , 
-                                          feature_fraction = ,
-                                          lambda_l1 = 0, 
-                                          lambda_l2 = 0),
-                            data = dtrain,
-                            valids = valids,
-                            verbose = 0)
-    loss[j] <- min(rbindlist(model[[j]]$record_evals$test$binary_logloss))
-  }
-  lgbm_tune4[nrow(lgbm_tune4)+1, ] = c(i,
-                                       lgbmGrid4[which.min(loss), "top_rate"],
-                                       lgbmGrid4[which.min(loss), "other_rate"],
-                                       min(loss))
-  print(lgbm_tune4[i,])  
-}
-lgbm_tune4
-write.csv(lgbm_tune4, ".\\result\\LGBM_resort_gossrate.csv", row.names=FALSE)
-
-## 7.2 Tuning classification threshold ----
 lgbm_params <- list(objective = 'binary', data_sample_strategy = 'goss', boosting = 'gbdt',
                     num_iterations = 500, learning_rate = 0.1, num_leaves = 250,
                     min_data_in_leaf = 1, feature_fraction = 0.8,
                     top_rate = 0.2, other_rate = 0.5,
                     lambda_l1 = 0, lambda_l2 = 0)
 
+
+## 6.1 Tuning classification threshold ----
 lgbm_threshold <- data.frame(matrix(ncol=6, nrow=0))
 colnames(lgbm_threshold) = c('Threshold', 'fold', 'Accuracy', 'Precision', 'Recall', 'F1')
 
@@ -927,7 +582,8 @@ lgbm_threshold %>%
             AVG_F1 = mean(F1))
 write.csv(lgbm_threshold, ".\\result\\LGBM_resort_threshold.csv", row.names=FALSE)
 
-## 7.3 Final LGBM with gbdt boosting ----
+
+## 6.2 Final LGBM with gbdt boosting ----
 lgbm_params <- list(objective = 'binary', data_sample_strategy = 'goss', boosting = 'gbdt',
                     num_iterations = 500, learning_rate = 0.1, num_leaves = 250,
                     min_data_in_leaf = 1, feature_fraction = 0.8,
@@ -984,7 +640,7 @@ ggplot(LGB_imp20, aes(y=reorder(Feature, MeansGain), x=MeansGain)) +
   ggtitle('Resort Hotel using LightGBM')
 write.csv(LGB_imp, ".\\result\\LGBM_resort_FI.csv", row.names=FALSE)
 
-# 8. CatBoost ----
+# 7. CatBoost ----
 # Tuning parameters
 # - depth = Tree Depth 
 # - learning_rate
@@ -994,13 +650,14 @@ write.csv(LGB_imp, ".\\result\\LGBM_resort_FI.csv", row.names=FALSE)
 # - border_count = The number of splits for numerical features
 
 ## catBoost dataset ----
-hotel_catb <- preprocess(one_hot = FALSE, feature_select = TRUE)
-resort_catb <- hotel_catb[[2]]
-sapply(resort_catb, class)
-summary(resort_catb$is_canceled)
+# hotel_catb <- preprocess(one_hot = FALSE, feature_select = TRUE)
+# resort_catb <- hotel_catb[[2]]
+# sapply(resort_catb, class)
+# summary(resort_catb$is_canceled)
+
 catb_trainCR <- trainControl(method = 'LGOCV',  p = 0.7, number = 1, search = 'grid')
 
-## 8.1 Initial trees ----
+## 7.1 Initial trees ----
 # Tune iterations and learning_rate
 catbGrid1 <- expand.grid(iterations = c(100, 300, 500),
                          learning_rate = c(0.01, 0.1, 0.3),
@@ -1009,24 +666,11 @@ catbGrid1 <- expand.grid(iterations = c(100, 300, 500),
                          l2_leaf_reg = 0.01,
                          rsm = 1,
                          border_count = 512)
-catB_tune1 <- data.frame(matrix(ncol = 3, nrow = 0))
-colnames(catB_tune1) = c('fold', 'iterations', 'learning_rate')
-for (i in 1:5){
-  print(i)
-  train_inner <- resort_catb[-outer_folds[[i]],]
-  
-  catBModel <- train(train_inner %>% select(-is_canceled), 
-                     as.factor(make.names(train_inner$is_canceled)),
-                     method = catboost.caret,
-                     tuneGrid = catbGrid1, 
-                     trControl = catb_trainCR,
-                     verbose = 0)
-  catB_tune1[nrow(catB_tune1)+1, ] = c(i, catBModel$bestTune$iterations, catBModel$bestTune$learning_rate)
-}
+catB_tune1 <- catb_tuning(resort, catb_trainCR, outer_folds, catbGrid1)
 write.csv(catB_tune1, ".\\result\\catB_resort_iterlr.csv", row.names=FALSE)
 catB_tune1
 
-## 8.2 Tune tree depth ----
+## 7.2 Tune tree depth ----
 catbGrid2 <- expand.grid(depth = c(4, 6, 8, 10, 12),
                          # fixed value
                          iterations = 500,
@@ -1034,24 +678,11 @@ catbGrid2 <- expand.grid(depth = c(4, 6, 8, 10, 12),
                          l2_leaf_reg = 0.01,
                          rsm = 1,
                          border_count = 512)
-catB_tune2 <- data.frame(matrix(ncol = 2, nrow = 0))
-colnames(catB_tune2) = c('fold', 'depth')
-for (i in 1:5){
-  print(i)
-  train_inner <- resort_catb[-outer_folds[[i]],]
-  
-  catBModel <- train(train_inner %>% select(-is_canceled), 
-                     as.factor(make.names(train_inner$is_canceled)),
-                     method = catboost.caret,
-                     tuneGrid = catbGrid2, 
-                     trControl = catb_trainCR,
-                     verbose = 0)
-  catB_tune2[nrow(catB_tune2)+1, ] = c(i, catBModel$bestTune$depth)
-}
+catB_tune2 <- catb_tuning(resort, catb_trainCR, outer_folds, catbGrid2)
 write.csv(catB_tune2, ".\\result\\catB_resort_depth.csv", row.names=FALSE)
 catB_tune2
 
-## 8.3 Tune rsm ----
+## 7.3 Tune rsm ----
 catbGrid3 <- expand.grid(rsm = c(0.4, 0.6, 0.8, 1),
                          # fixed value
                          iterations = 500,
@@ -1059,54 +690,28 @@ catbGrid3 <- expand.grid(rsm = c(0.4, 0.6, 0.8, 1),
                          depth = 10,
                          l2_leaf_reg = 0.01,
                          border_count = 512)
-catB_tune3 <- data.frame(matrix(ncol = 2, nrow = 0))
-colnames(catB_tune3) = c('fold', 'rsm')
-for (i in 1:5){
-  print(i)
-  train_inner <- resort_catb[-outer_folds[[i]],]
-  
-  catBModel <- train(train_inner %>% select(-is_canceled), 
-                     as.factor(make.names(train_inner$is_canceled)),
-                     method = catboost.caret,
-                     tuneGrid = catbGrid3, 
-                     trControl = catb_trainCR,
-                     verbose = 0)
-  catB_tune3[nrow(catB_tune3)+1, ] = c(i, catBModel$bestTune$rsm)
-}
+catB_tune3 <- catb_tuning(resort, catb_trainCR, outer_folds, catbGrid3)
 write.csv(catB_tune3, ".\\result\\catB_resort_rsm.csv", row.names=FALSE)
 catB_tune3
 
-## 8.4 Tune L2 reg ----
-catbGrid4 <- expand.grid(l2_leaf_reg = c(0, 0.001, 0.01, 0.1),
+## 7.4 Tune L2 reg ----
+catbGrid4 <- expand.grid(l2_leaf_reg = c(0.01),
                          # fixed value
                          iterations = 500,
                          learning_rate = 0.1,
-                         depth = ,
-                         rsm = ,
+                         depth = 10,
+                         rsm = 1,
                          border_count = 512)
-catB_tune4 <- data.frame(matrix(ncol = 2, nrow = 0))
-colnames(catB_tune4) = c('fold', 'l2_leaf_reg')
-for (i in 1:5){
-  print(i)
-  train_inner <- resort_catb[-outer_folds[[i]],]
-  
-  catBModel <- train(train_inner %>% select(-is_canceled), 
-                     as.factor(make.names(train_inner$is_canceled)),
-                     method = catboost.caret,
-                     tuneGrid = catbGrid4, 
-                     trControl = catb_trainCR,
-                     verbose = 0)
-  catB_tune4[nrow(catB_tune4)+1, ] = c(i, catBModel$bestTune$l2_leaf_reg)
-}
+catB_tune4 <- catb_tuning(resort, catb_trainCR, outer_folds, catbGrid4)
 write.csv(catB_tune4, ".\\result\\catB_resort_l2.csv", row.names=FALSE)
 catB_tune4
 
-## 8.5 Tune classification threshold ----
+## 7.5 Tune classification threshold ----
 catb_params <- list(iterations = 500, 
                     learning_rate = 0.1,
-                    rsm = ,
-                    depth = ,
-                    l2_leaf_reg = ,
+                    rsm = 1,
+                    depth = 10,
+                    l2_leaf_reg = 0.01,
                     border_count = 512,
                     logging_level = 'Silent')
 catb_threshold <- data.frame(matrix(ncol=6, nrow=0))
@@ -1114,22 +719,19 @@ colnames(catb_threshold) = c('Threshold', 'fold', 'Accuracy', 'Precision', 'Reca
 for (threshold in seq(0.4, 0.6, 0.1)){
   for (i in 1:5){
     print(paste(threshold, i))
-    train <- resort_catb[-outer_folds[[i]],]
+    train <- resort[-outer_folds[[i]],]
     train_idx <- createDataPartition(train$is_canceled, p=0.7, list=FALSE)
     train_inner <- train[train_idx,]
     val_inner <- train[-train_idx,]
-    
     train_pool <- catboost.load_pool(data = train_inner %>% select(-is_canceled), 
                                      label = unclass(train_inner$is_canceled)%%2)
     val_pool <- catboost.load_pool(data = val_inner %>% select(-is_canceled), 
                                     label = unclass(val_inner$is_canceled)%%2)
   
     catb_model <- catboost.train(train_pool, params = catb_params)
-    
     catb.pred <- catboost.predict(catb_model, val_pool, prediction_type = 'Probability')
     catb.pred <- ifelse (catb.pred >= threshold, 1, 0)
     catb.pred <- factor(catb.pred, levels = c(1,0))
-    
     val_inner$is_canceled <- factor(val_inner$is_canceled, levels = c(1,0))
     catb.cm <- confusionMatrix(catb.pred, val_inner$is_canceled)
     catb_threshold[nrow(catb_threshold)+1, ] = c(threshold, i, 
@@ -1145,7 +747,7 @@ catb_threshold %>%
             AVG_F1 = mean(F1))
 write.csv(catb_threshold, ".\\result\\catB_resort_threshold.csv", row.names=FALSE)
 
-## 8.6 Final CatBoost ----
+## 7.6 Final CatBoost ----
 catb_params <- list(iterations = 500, 
                     learning_rate = 0.1,
                     rsm = 1,
@@ -1153,17 +755,16 @@ catb_params <- list(iterations = 500,
                     l2_leaf_reg = 0.01,
                     border_count = 512,
                     logging_level = 'Silent')
-
 catb_result <- data.frame(matrix(ncol=4, nrow=0))
 colnames(catb_result) = c('Accuracy', 'Precision', 'Recall', 'F1')
-catb_imp <- matrix(0, nrow = ncol(resort_catb)-1, ncol=0)
-catb_imp <- cbind(catb_imp, colnames(resort_catb %>% select(-is_canceled)))
+catb_imp <- matrix(0, nrow = ncol(resort)-1, ncol=0)
+catb_imp <- cbind(catb_imp, colnames(resort %>% select(-is_canceled)))
 colnames(catb_imp) <- c('Feature')
 
 for (i in 1:5){
   print(i)
-  train <- resort_catb[-outer_folds[[i]],]
-  test <- resort_catb[outer_folds[[i]],]
+  train <- resort[-outer_folds[[i]],]
+  test <- resort[outer_folds[[i]],]
   
   train_pool <- catboost.load_pool(data = train %>% select(-is_canceled), 
                                    label = unclass(train$is_canceled)%%2)
