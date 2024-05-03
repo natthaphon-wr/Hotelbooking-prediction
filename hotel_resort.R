@@ -101,9 +101,9 @@ write.csv(RF_nodesize, ".\\result\\RF_resort_nodesize.csv", row.names=FALSE)
 ## 3.4 Final RF ----
 RF_result <- data.frame(matrix(ncol=4, nrow=0))
 colnames(RF_result) = c('Accuracy', 'Precision', 'Recall', 'F1')
-# RF_imp <- matrix(0, nrow = ncol(resort)-1, ncol=1)
-# rownames(RF_imp) <- colnames(resort %>% select(-is_canceled))
-# colnames(RF_imp) <- c('MeanDecreaseGini')
+RF_imp <- matrix(0, nrow = ncol(resort_1hot)-1, ncol=1)
+rownames(RF_imp) <- colnames(resort_1hot %>% select(-is_canceled))
+colnames(RF_imp) <- c('MeanDecreaseGini')
 
 for (i in 1:5){
   print(i)
@@ -113,7 +113,7 @@ for (i in 1:5){
   test <- onehot_encode(test)
   
   RF <- randomForest(is_canceled~., data=train, ntree=500, mtry=10, nodesize=10)
-  # RF_imp <- RF_imp + importance(RF)
+  RF_imp <- RF_imp + importance(RF)
   
   RF.pred <- predict(RF, test, type='response')
   RF_CM <- confusionMatrix(RF.pred, test$is_canceled)
@@ -166,7 +166,7 @@ GBM_nmin_params <- list(n.trees = 500,
                          n.minobsinnode = c(50, 100, 150, 200),
                          bag.fraction = 1,
                          threshold = 0.5)
-GBM_tune2 <- rf_tuning(data = resort_GBM, 
+GBM_tune2 <- rf_tuning(data = resort, 
                        outer_folds = outer_folds, 
                        Ntrees = GBM_nmin_params$n.trees, 
                        Shrinkage = GBM_nmin_params$shrinkage, 
@@ -189,7 +189,7 @@ GBM_bagfrac_params <- list(n.trees = 500,
                         n.minobsinnode = 150,
                         bag.fraction = c(0.4, 0.6, 0.8, 1),
                         threshold = 0.5)
-GBM_tune3 <- rf_tuning(data = resort_GBM, 
+GBM_tune3 <- rf_tuning(data = resort, 
                        outer_folds = outer_folds, 
                        Ntrees = GBM_bagfrac_params$n.trees, 
                        Shrinkage = GBM_bagfrac_params$shrinkage, 
@@ -212,7 +212,7 @@ GBM_theshold_params <- list(n.trees = 500,
                            n.minobsinnode = 150,
                            bag.fraction = 1,
                            threshold = c(0.4, 0.5, 0.6))
-GBM_tune4 <- rf_tuning(data = resort_GBM, 
+GBM_tune4 <- rf_tuning(data = resort, 
                        outer_folds = outer_folds, 
                        Ntrees = GBM_theshold_params$n.trees, 
                        Shrinkage = GBM_theshold_params$shrinkage, 
@@ -269,124 +269,79 @@ write.csv(GBM_result, ".\\result\\GBM_resort_Evaluation.csv", row.names=FALSE)
 #   - colsample_bytree = subsample ratio of columns
 
 ## XGB dataset ---- 
-resort_xgb <- resort
-resort_xgb$is_canceled <- unclass(resort_xgb$is_canceled)%%2
+# resort_xgb <- resort
+# resort_xgb$is_canceled <- unclass(resort_xgb$is_canceled)%%2
 xgb_trainCtr = trainControl(method = "LGOCV", p = 0.7, number = 1, search = "grid")
 
 ## 5.1 Initial nrounds and learning rate ----
-xgbGrid1 <-  expand.grid(eta = c(0.01, 0.1, 0.2, 0.3), 
-                         nrounds = c(100, 300, 500),
+xgbGrid1 <-  expand.grid(eta = 0.1, 
+                         nrounds = 500,
                          # fixed values below
-                         max_depth = 10, 
+                         max_depth = 15, 
                          min_child_weight = 1,
                          gamma = 0.1,
-                         subsample = 1,
-                         colsample_bytree = 0.5
-                         )
-
-XGB_tune1 <- data.frame(matrix(ncol=3, nrow=0))
-colnames(XGB_tune1) = c('fold', 'eta', 'nrounds')
-for (i in 1:5){
-  print(i)
-  train_inner <- resort[-outer_folds[[i]],] 
-  
-  xgbModel <- train(is_canceled~.,
-                   data = train_inner,
-                   method = "xgbTree", 
-                   trControl = xgb_trainCtr, 
-                   tuneGrid = xgbGrid1,
-                   verbosity = 0)
-  
-  XGB_tune1[nrow(XGB_tune1)+1, ] = c(i, xgbModel$bestTune$eta, xgbModel$bestTune$nrounds)
-}
-write.csv(XGB_tune1, ".\\result\\XGB_resort_etanrounds.csv", row.names=FALSE)
+                         subsample = 0.9,
+                         colsample_bytree = 0.7)
+XGB_tune1 <- xgb_tuning(data = resort, 
+                        train_ctr = xgb_trainCtr, 
+                        outer_folds = outer_folds, 
+                        param_grid = xgbGrid1)
 XGB_tune1
+write.csv(XGB_tune1, ".\\result\\XGB_resort_etanrounds.csv", row.names=FALSE)
+
 
 
 ## 5.2 Tune max_depth, min_child_weight ----
-xgbGrid2 <-  expand.grid(max_depth = c(5, 10, 15),
-                         min_child_weight = c(1, 5, 10),
+xgbGrid2 <-  expand.grid(max_depth = 15, 
+                         min_child_weight = 1,
                          # fixed values below
-                         eta = 0.1,
+                         eta = 0.1, 
                          nrounds = 500,
                          gamma = 0.1,
-                         subsample = 1,
-                         colsample_bytree = 0.5
-                         )
-
-XGB_tune2<- data.frame(matrix(ncol=3, nrow=0))
-colnames(XGB_tune2) = c('fold', 'max_depth', 'min_child_weight')
-for (i in 1:5){
-  print(i)
-  train_inner <- resort[-outer_folds[[i]],] 
-  
-  xgbModel <- train(is_canceled~.,
-                    data = train_inner,
-                    method = "xgbTree", 
-                    trControl = xgb_trainCtr, 
-                    tuneGrid = xgbGrid2,
-                    verbosity = 0)
-  
-  XGB_tune2[nrow(XGB_tune2)+1, ] = c(i, xgbModel$bestTune$max_depth, xgbModel$bestTune$min_child_weight)
-}
-write.csv(XGB_tune2, ".\\result\\XGB_resort_depth.csv", row.names=FALSE)
+                         subsample = 0.9,
+                         colsample_bytree = 0.7)
+XGB_tune2 <- xgb_tuning(data = resort, 
+                        train_ctr = xgb_trainCtr, 
+                        outer_folds = outer_folds, 
+                        param_grid = xgbGrid2)
 XGB_tune2
+write.csv(XGB_tune2, ".\\result\\XGB_resort_depth.csv", row.names=FALSE)
+
 
 ## 5.3 Tune gamma ----
-xgbGrid3 <-  expand.grid(gamma = c(0, 0.01, 0.1, 0.2),
+xgbGrid3 <-  expand.grid(gamma = 0.1,
                          # fixed values below
-                         eta = 0.1,
                          nrounds = 500,
-                         max_depth = 15,
+                         eta = 0.1, 
+                         max_depth = 15, 
                          min_child_weight = 1,
-                         subsample = 1,
-                         colsample_bytree = 0.5
-                         )
-XGB_tune3 <- data.frame(matrix(ncol=2, nrow=0))
-colnames(XGB_tune3) = c('fold', 'gamma')
-for (i in 1:5){
-  print(i)
-  train_inner <- resort[-outer_folds[[i]],] 
-  
-  xgbModel <- train(is_canceled~.,
-                    data = train_inner,
-                    method = "xgbTree", 
-                    trControl = xgb_trainCtr, 
-                    tuneGrid = xgbGrid3,
-                    verbosity = 0)
-  
-  XGB_tune3[nrow(XGB_tune3)+1, ] = c(i, xgbModel$bestTune$gamma)
-}
-write.csv(XGB_tune3, ".\\result\\XGB_resort_gamma.csv", row.names=FALSE)
+                         subsample = 0.9,
+                         colsample_bytree = 0.7)
+XGB_tune3 <- xgb_tuning(data = resort, 
+                        train_ctr = xgb_trainCtr, 
+                        outer_folds = outer_folds, 
+                        param_grid = xgbGrid3)
 XGB_tune3
+write.csv(XGB_tune3, ".\\result\\XGB_resort_gamma.csv", row.names=FALSE)
+
 
 ## 5.4 Tune subsample and colsample_bytree ----
-xgbGrid4 <-  expand.grid(colsample_bytree = c(0.7, 0.9, 1), 
-                         subsample = c(0.7, 0.9, 1),
-                         # fixed values below
-                         gamma = 0.1,
-                         eta = 0.1,
+xgbGrid4 <-  expand.grid(subsample = 0.9,
+                         colsample_bytree = 0.7,
+                         eta = 0.1, 
                          nrounds = 500,
-                         max_depth = 15,
-                         min_child_weight = 1
+                         # fixed values below
+                         max_depth = 15, 
+                         min_child_weight = 1,
+                         gamma = 0.1,
                          )
-XGB_tune4 <- data.frame(matrix(ncol=3, nrow=0))
-colnames(XGB_tune4) = c('fold', 'colsample_bytree', 'subsample')
-for (i in 1:5){
-  print(i)
-  train_inner <- resort[-outer_folds[[i]],] 
-  
-  xgbModel <- train(is_canceled~.,
-                    data = train_inner,
-                    method = "xgbTree", 
-                    trControl = xgb_trainCtr, 
-                    tuneGrid = xgbGrid4,
-                    verbosity = 0)
-  
-  XGB_tune4[nrow(XGB_tune4)+1, ] = c(i, xgbModel$bestTune$colsample_bytree, xgbModel$bestTune$subsample)
-}
-write.csv(XGB_tune4, ".\\result\\XGB_resort_sample.csv", row.names=FALSE)
+XGB_tune4 <- xgb_tuning(data = resort, 
+                        train_ctr = xgb_trainCtr, 
+                        outer_folds = outer_folds, 
+                        param_grid = xgbGrid4)
 XGB_tune4
+write.csv(XGB_tune4, ".\\result\\XGB_resort_sample.csv", row.names=FALSE)
+
 
 ## 5.5 Tune classification threshold ----
 xgb_params <- list(eta = 0.1, 
@@ -396,7 +351,6 @@ xgb_params <- list(eta = 0.1,
                    subsample = 0.9, 
                    colsample_bytree = 0.7,
                    booster = "gbtree", objective="binary:logistic", eval_metric="error")
-
 xgb_threshold <- data.frame(matrix(ncol=6, nrow=0))
 colnames(xgb_threshold) = c('Threshold', 'fold', 'Accuracy', 'Precision', 'Recall', 'F1')
 for (threshold in seq(0.4, 0.6, 0.1)){
@@ -406,6 +360,10 @@ for (threshold in seq(0.4, 0.6, 0.1)){
     train_idx <- createDataPartition(train$is_canceled, p=0.7, list=FALSE)
     train_inner <- train[train_idx,]
     val_inner <- train[-train_idx,]
+    train_inner <- onehot_encode(train_inner)
+    val_inner <- onehot_encode(val_inner)
+    train_inner$is_canceled <- unclass(train_inner$is_canceled)%%2
+    val_inner$is_canceled <- unclass(val_inner$is_canceled)%%2
   
     dtrain = xgb.DMatrix(as.matrix(sapply(train_inner %>% select(-is_canceled), as.numeric)),
                          label=train_inner$is_canceled)
@@ -452,6 +410,10 @@ for (i in 1:5){
   print(i)
   train <- resort_xgb[-outer_folds[[i]],]
   test <- resort_xgb[outer_folds[[i]],]
+  train <- onehot_encode(train)
+  test <- onehot_encode(test)
+  train$is_canceled <- unclass(train$is_canceled)%%2
+  test$is_canceled <- unclass(test$is_canceled)%%2
   
   dtrain = xgb.DMatrix(as.matrix(sapply(train %>% select(-is_canceled), as.numeric)),
                        label=train$is_canceled)

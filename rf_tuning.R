@@ -41,7 +41,7 @@ rf_tuning <- function(data, outer_folds, Ntree, Mtry, Nodesize, param){
         train_inner <- onehot_encode(train_inner)
         val_inner <- onehot_encode(val_inner)
         
-        RF <- randomForest(is_canceled~., data=train_inner, ntree=n, mtry=Mtry, nodesize=Nodesize)
+        RF <- randomForest(is_canceled~., data=train_inner, ntree=Ntree, mtry=n, nodesize=Nodesize)
         RF.pred <- predict(RF, val_inner, type='response')
         RF_CM <- confusionMatrix(RF.pred, val_inner$is_canceled)
         Tune_df[nrow(Tune_df)+1, ] = c(n, i,
@@ -60,7 +60,7 @@ rf_tuning <- function(data, outer_folds, Ntree, Mtry, Nodesize, param){
         train_inner <- onehot_encode(train_inner)
         val_inner <- onehot_encode(val_inner)
         
-        RF <- randomForest(is_canceled~., data=train_inner, ntree=n, mtry=Mtry, nodesize=Nodesize)
+        RF <- randomForest(is_canceled~., data=train_inner, ntree=Ntree, mtry=Mtry, nodesize=n)
         RF.pred <- predict(RF, val_inner, type='response')
         RF_CM <- confusionMatrix(RF.pred, val_inner$is_canceled)
         Tune_df[nrow(Tune_df)+1, ] = c(n, i,
