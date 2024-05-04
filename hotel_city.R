@@ -2,6 +2,7 @@ source('preprocess.R')
 source('onehot_encode.R')
 source('rf_tuning.R')
 source('gbm_tuning.R')
+source('xgb_tuning.R')
 source('catb_tuning.R')
 
 library(tree)
@@ -125,8 +126,9 @@ write.csv(RF_result, ".\\result\\RF_city_Evaluation.csv", row.names=FALSE)
 # Feature importance
 RF_imp <- RF_imp/5
 RF_imp <- data.frame('MeanDecreaseGini' = RF_imp)
+RF_imp <- tibble::rownames_to_column(RF_imp, "Feature") 
 RF_imp20 <- top_n(RF_imp, 20, MeanDecreaseGini)
-ggplot(RF_imp20, aes(y=reorder(rownames(RF_imp20), MeanDecreaseGini), x=MeanDecreaseGini)) +
+ggplot(RF_imp20, aes(y=reorder(Feature, MeanDecreaseGini), x=MeanDecreaseGini)) +
   geom_bar(stat = "identity") +
   ylab('Features') +
   ggtitle('City Hotel using Random Forest')
@@ -284,7 +286,7 @@ write.csv(GBM_result, ".\\result\\GBM_city_Evaluation.csv", row.names=FALSE)
 xgb_trainCtr = trainControl(method = "LGOCV", p = 0.7, number = 1, search = "grid")
 
 ## 5.1 Initial nrounds and learning rate ----
-xgbGrid1 <-  expand.grid(eta = c(0.01, 0.1, 0.2, 0.3), 
+xgbGrid1 <-  expand.grid(eta = c(0.01, 0.1, 0.2, 0.3, 0.5), 
                          nrounds = 500,
                          # fixed values below
                          max_depth = 5, 
@@ -300,28 +302,11 @@ XGB_tune1
 write.csv(XGB_tune1, ".\\result\\XGB_city_etanrounds.csv", row.names=FALSE)
 
 
-# XGB_tune1 <- data.frame(matrix(ncol=3, nrow=0))
-# colnames(XGB_tune1) = c('fold', 'eta', 'nrounds')
-# for (i in 1:5){
-#   print(i)
-#   train_inner <- city[-outer_folds[[i]],] 
-#   
-#   xgbModel <- train(is_canceled~.,
-#                     data = train_inner,
-#                     method = "xgbTree", 
-#                     trControl = xgb_trainCtr, 
-#                     tuneGrid = xgbGrid1,
-#                     verbosity = 0)
-#   
-#   XGB_tune1[nrow(XGB_tune1)+1, ] = c(i, xgbModel$bestTune$eta, xgbModel$bestTune$nrounds)
-# }
-
-
 ## 5.2 Tune max_depth, min_child_weight ----
 xgbGrid2 <-  expand.grid(max_depth = c(5, 10, 15),
                          min_child_weight = c(1, 5, 10),
                          # fixed values below
-                         eta = ,
+                         eta = 0.2,
                          nrounds = 500,
                          gamma = 0,
                          subsample = 1,
@@ -337,10 +322,10 @@ write.csv(XGB_tune2, ".\\result\\XGB_cit_depth.csv", row.names=FALSE)
 ## 5.3 Tune gamma ----
 xgbGrid3 <-  expand.grid(gamma = c(0, 0.01, 0.1, 0.2),
                          # fixed values below
-                         eta = ,
+                         eta = 0.2,
                          nrounds = 500,
-                         max_depth = ,
-                         min_child_weight = ,
+                         max_depth = 10,
+                         min_child_weight = 1,
                          subsample = 1,
                          colsample_bytree = 1)
 XGB_tune3 <- xgb_tuning(data = city, 
@@ -355,11 +340,11 @@ write.csv(XGB_tune3, ".\\result\\XGB_cit_gamma.csv", row.names=FALSE)
 xgbGrid4 <-  expand.grid(subsample = c(0.7, 0.9, 1),
                          colsample_bytree = c(0.7, 0.9, 1), 
                          # fixed values below
-                         gamma = ,
-                         eta = ,
+                         gamma = 0.2,
+                         eta = 0.2,
                          nrounds = 500,
-                         max_depth = ,
-                         min_child_weight = )
+                         max_depth = 10,
+                         min_child_weight = 1)
 XGB_tune4 <- xgb_tuning(data = city, 
                         train_ctr = xgb_trainCtr, 
                         outer_folds = outer_folds, 
@@ -369,19 +354,19 @@ write.csv(XGB_tune4, ".\\result\\XGB_cit_sample.csv", row.names=FALSE)
 
 
 ## 5.5 Tune classification threshold ----
-xgb_params <- list(eta = , 
-                   gamma = , 
-                   max_depth = , 
-                   min_child_weight = , 
-                   subsample = , 
-                   colsample_bytree = ,
+xgb_params <- list(eta = 0.2, 
+                   gamma = 0.2, 
+                   max_depth = 10, 
+                   min_child_weight = 1, 
+                   subsample = 0.9, 
+                   colsample_bytree = 1,
                    booster = "gbtree", objective="binary:logistic", eval_metric="error")
 xgb_threshold <- data.frame(matrix(ncol=6, nrow=0))
 colnames(xgb_threshold) = c('Threshold', 'fold', 'Accuracy', 'Precision', 'Recall', 'F1')
 for (threshold in seq(0.4, 0.6, 0.1)){
   for (i in 1:5){
     print(paste(threshold, i))
-    train <- city_xgb[-outer_folds[[i]],]
+    train <- city[-outer_folds[[i]],]
     train_idx <- createDataPartition(train$is_canceled, p=0.7, list=FALSE)
     train_inner <- train[train_idx,]
     val_inner <- train[-train_idx,]
@@ -419,12 +404,12 @@ write.csv(xgb_threshold, ".\\result\\XGB_city_threshold.csv", row.names=FALSE)
 
 
 ## 5.6 Final result ----
-xgb_params <- list(eta = , 
-                   gamma = , 
-                   max_depth = , 
-                   min_child_weight = , 
-                   subsample = , 
-                   colsample_bytree = ,
+xgb_params <- list(eta = 0.2, 
+                   gamma = 0.2, 
+                   max_depth = 10, 
+                   min_child_weight = 1, 
+                   subsample = 0.9, 
+                   colsample_bytree = 1,
                    booster = "gbtree", objective="binary:logistic", eval_metric="error")
 XGB_result <- data.frame(matrix(ncol=4, nrow=0))
 colnames(XGB_result) = c('Accuracy', 'Precision', 'Recall', 'F1')
@@ -458,7 +443,7 @@ for (i in 1:5){
   )
   
   xgb.pred <- predict(XGB, newdata=dtest)
-  xgb.pred <- ifelse (xgb.pred >= , 1, 0)
+  xgb.pred <- ifelse (xgb.pred >= 0.5, 1, 0)
   xgb.pred <- factor(xgb.pred, levels = c(1,0))
   
   test$is_canceled <- factor(test$is_canceled, levels = c(1,0))
@@ -613,7 +598,7 @@ for (i in 1:5){
 }
 lgbm_result
 colMeans(lgbm_result)
-write.csv(lgbm_result, ".\\result\\LGBM_city_Evaluation.csv", row.names=FALSE)
+write.csv(lgbm_result, ".\\result\\LGBM_city_Evaluation1.csv", row.names=FALSE)
 
 # Feature importance
 LGB_imp[is.na(LGB_imp)] <- 0
@@ -624,7 +609,7 @@ ggplot(LGB_imp20, aes(y=reorder(Feature, MeansGain), x=MeansGain)) +
   xlab('Gain') +
   ylab('Features') +
   ggtitle('City Hotel using LightGBM')
-
+write.csv(LGB_imp, ".\\result\\LGBM_city_FI1.csv", row.names=FALSE)
 
 # 8. CatBoost ----
 # Tuning parameters
@@ -661,7 +646,7 @@ write.csv(catB_tune1, ".\\result\\catB_city_iterlr.csv", row.names=FALSE)
 catbGrid2 <- expand.grid(depth = c(4, 6, 8, 10, 12),
                          # fixed value
                          iterations = 500,
-                         learning_rate = ,
+                         learning_rate = 0.1,
                          l2_leaf_reg = 0.1,
                          rsm = 0.8,
                          border_count = 512)
@@ -674,8 +659,8 @@ write.csv(catB_tune2, ".\\result\\catB_city_depth.csv", row.names=FALSE)
 catbGrid3 <- expand.grid(rsm = c(0.6, 0.8, 1),
                          # fixed value
                          iterations = 500,
-                         learning_rate = ,
-                         depth = ,
+                         learning_rate = 0.1,
+                         depth = 12,
                          l2_leaf_reg = 0.1,
                          border_count = 512)
 catB_tune3 <- catb_tuning(city, catb_trainCR, outer_folds, catbGrid3)
@@ -687,9 +672,9 @@ write.csv(catB_tune3, ".\\result\\catB_city_rsm.csv", row.names=FALSE)
 catbGrid4 <- expand.grid(l2_leaf_reg = c(0, 0.001, 0.01, 0.1),
                          # fixed value
                          iterations = 500,
-                         learning_rate = ,
-                         depth = ,
-                         rsm = ,
+                         learning_rate = 0.1,
+                         depth = 12,
+                         rsm = 0.8,
                          border_count = 512)
 catB_tune4 <- catb_tuning(city, catb_trainCR, outer_folds, catbGrid4)
 catB_tune4
@@ -698,10 +683,10 @@ write.csv(catB_tune4, ".\\result\\catB_city_l2.csv", row.names=FALSE)
 
 ## 8.5 Tune classification threshold ----
 catb_params <- list(iterations = 500, 
-                    learning_rate = ,
-                    rsm = ,
-                    depth = ,
-                    l2_leaf_reg = ,
+                    learning_rate = 0.1,
+                    rsm = 0.8,
+                    depth = 12,
+                    l2_leaf_reg = 0.1,
                     border_count = 512,
                     logging_level = 'Silent')
 catb_threshold <- data.frame(matrix(ncol=6, nrow=0))
@@ -709,7 +694,7 @@ colnames(catb_threshold) = c('Threshold', 'fold', 'Accuracy', 'Precision', 'Reca
 for (threshold in seq(0.4, 0.7, 0.1)){
   for (i in 1:5){
     print(paste(threshold, i))
-    train <- city_catb[-outer_folds[[i]],]
+    train <- city[-outer_folds[[i]],]
     train_idx <- createDataPartition(train$is_canceled, p=0.7, list=FALSE)
     train_inner <- train[train_idx,]
     val_inner <- train[-train_idx,]
@@ -741,22 +726,22 @@ write.csv(catb_threshold, ".\\result\\catB_city_threshold.csv", row.names=FALSE)
 
 ## 8.6 Final CatBoost ----
 catb_params <- list(iterations = 500, 
-                    learning_rate = ,
-                    rsm = ,
-                    depth = ,
-                    l2_leaf_reg = ,
+                    learning_rate = 0.1,
+                    rsm = 0.8,
+                    depth = 12,
+                    l2_leaf_reg = 0.1,
                     border_count = 512,
                     logging_level = 'Silent')
 catb_result <- data.frame(matrix(ncol=4, nrow=0))
 colnames(catb_result) = c('Accuracy', 'Precision', 'Recall', 'F1')
-catb_imp <- matrix(0, nrow = ncol(city_catb)-1, ncol=0)
-catb_imp <- cbind(catb_imp, colnames(city_catb %>% select(-is_canceled)))
+catb_imp <- matrix(0, nrow = ncol(city)-1, ncol=0)
+catb_imp <- cbind(catb_imp, colnames(city %>% select(-is_canceled)))
 colnames(catb_imp) <- c('Feature')
 
 for (i in 1:5){
   print(i)
-  train <- city_catb[-outer_folds[[i]],]
-  test <- city_catb[outer_folds[[i]],]
+  train <- city[-outer_folds[[i]],]
+  test <- city[outer_folds[[i]],]
   
   train_pool <- catboost.load_pool(data = train %>% select(-is_canceled), 
                                    label = unclass(train$is_canceled)%%2)
@@ -770,11 +755,11 @@ for (i in 1:5){
   catb_imp <- merge(x = catb_imp,
                     y = catb_fi,
                     by.x = "Feature",
-                    by.y = "Feature",s
+                    by.y = "Feature",
                     all.x = TRUE)
   
   catb.pred <- catboost.predict(catb_model, test_pool,prediction_type = 'Probability')
-  catb.pred <- ifelse (catb.pred >= , 1, 0)
+  catb.pred <- ifelse (catb.pred >= 0.6, 1, 0)
   catb.pred <- factor(catb.pred, levels = c(1,0))
   
   test$is_canceled <- factor(test$is_canceled, levels = c(1,0))

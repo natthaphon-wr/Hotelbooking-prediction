@@ -10,7 +10,7 @@ xgb_tuning <- function(data, train_ctr, outer_folds, param_grid){
     train_idx <- createDataPartition(train$is_canceled, p=0.7, list = FALSE)
     train_inner <- train[train_idx , ]
     train_inner <- onehot_encode(train_inner)
-    train_inner$is_canceled <- unclass(train_inner$is_canceled)%%2
+    # train_inner$is_canceled <- unclass(train_inner$is_canceled)%%2
     
     xgbModel <- train(is_canceled~.,
                       data = train_inner,
@@ -29,4 +29,5 @@ xgb_tuning <- function(data, train_ctr, outer_folds, param_grid){
                                    xgbModel$bestTune$colsample_bytree
                                    )
   }
+  return(Tune_df)
 }

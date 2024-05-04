@@ -123,6 +123,17 @@ for (i in 1:5){
 colMeans(RF_result)
 write.csv(RF_result, ".\\result\\RF_resort_Evaluation.csv", row.names=FALSE)
 
+# Feature importance
+RF_imp <- RF_imp/5
+RF_imp <- data.frame('MeanDecreaseGini' = RF_imp)
+RF_imp <- tibble::rownames_to_column(RF_imp, "Feature") 
+RF_imp20 <- top_n(RF_imp, 20, MeanDecreaseGini)
+ggplot(RF_imp20, aes(y=reorder(Feature, MeanDecreaseGini), x=MeanDecreaseGini)) +
+  geom_bar(stat = "identity") +
+  ylab('Features') +
+  ggtitle('City Hotel using Random Forest')
+write.csv(RF_imp, ".\\result\\RF_resort_FI.csv", row.names=FALSE)
+
 
 # 4. Gradient Boosting ----
 # Parameters Tuning
