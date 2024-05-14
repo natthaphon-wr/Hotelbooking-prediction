@@ -280,8 +280,8 @@ write.csv(GBM_result, ".\\result\\GBM_resort_Evaluation.csv", row.names=FALSE)
 #   - colsample_bytree = subsample ratio of columns
 
 ## XGB dataset ---- 
-# resort_xgb <- resort
-# resort_xgb$is_canceled <- unclass(resort_xgb$is_canceled)%%2
+resort_xgb <- resort
+resort_xgb$is_canceled <- unclass(resort_xgb$is_canceled)%%2
 xgb_trainCtr = trainControl(method = "LGOCV", p = 0.7, number = 1, search = "grid")
 
 ## 5.1 Initial nrounds and learning rate ----
@@ -417,10 +417,10 @@ XGB_imp <- matrix(0, nrow = ncol(resort_xgb)-1, ncol=0)
 XGB_imp <- cbind(XGB_imp, colnames(resort_xgb %>% select(-is_canceled)))
 colnames(XGB_imp) <- c('Feature')
 
-for (i in 1:5){
+for (i in 1:1){
   print(i)
-  train <- resort_xgb[-outer_folds[[i]],]
-  test <- resort_xgb[outer_folds[[i]],]
+  train <- resort[-outer_folds[[i]],]
+  test <- resort[outer_folds[[i]],]
   train <- onehot_encode(train)
   test <- onehot_encode(test)
   train$is_canceled <- unclass(train$is_canceled)%%2
@@ -454,6 +454,8 @@ for (i in 1:5){
 XGB_result
 colMeans(XGB_result)
 write.csv(XGB_result, ".\\result\\XGB_resort_Evaluation.csv", row.names=FALSE)
+
+xgb.plot.importance(xgb.importance(model=XGB), rel_to_first = TRUE)
 
 # Feature importance
 XGB_imp[is.na(XGB_imp)] <- 0

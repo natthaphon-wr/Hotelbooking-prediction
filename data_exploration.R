@@ -22,6 +22,7 @@ resort_cat <- data_cat[[2]]
 city_cat <- data_cat[[3]]
 summary(hotel_cat)
 
+
 # Plot all features ----
 data_all <- preprocess(one_hot = FALSE, feature_select = FALSE)
 hotels_all <- data_all[[1]]
@@ -29,8 +30,18 @@ resort_all <- data_all[[2]]
 city_all <- data_all[[3]]
 summary(hotels_all)
 
-
 ## Categorical data ----
+### deposit type ----
+ggplot(hotels_all) +
+  geom_bar(aes(x = deposit_type, fill = is_canceled), 
+           position = 'stack') +
+  scale_fill_manual(values = c('#F2543D', '#38C477')) +
+  theme(axis.text = element_text(size=10), 
+        axis.title = element_text(size=14),
+        legend.title = element_text(size=14),
+        legend.text = element_text(size=10))
+
+### arrival data ----
 ggplot(hotels_all) +
   geom_bar(aes(x = arrival_date_year))
 
@@ -63,12 +74,14 @@ ggplot(hotels_all) +
 
 
 ## Numerical data ----
-ggplot(hotels_all) +
-  geom_histogram(aes(x = lead_time, fill = is_canceled), binwidth = 50, position = 'dodge') 
-ggplot(resort_all) +
-  geom_histogram(aes(x = lead_time, fill = is_canceled), binwidth = 50, position = 'dodge') 
-ggplot(city_all) +
-  geom_histogram(aes(x = lead_time, fill = is_canceled), binwidth = 50, position = 'dodge') 
+ggplot(hotel_cat) +
+  geom_histogram(aes(x = lead_time, fill = is_canceled), binwidth = 50, position = 'stack') 
+ggplot(hotel_cat) +
+  geom_histogram(aes(x = adr, fill = is_canceled), binwidth = 50, position = 'stack') +
+  xlim(0, 500)
+ggplot(hotel_cat) +
+  geom_histogram(aes(x = arrival_date_week_number, fill = is_canceled), binwidth = 5, position = 'stack') 
+
 ggplot(hotels_all) +
   geom_histogram(aes(x = lead_time, fill = is_canceled))
 ggplot(resort_all) +
@@ -113,65 +126,102 @@ ggplot(city_all) +
   geom_bar(aes(x = total_of_special_requests, fill = is_canceled))
 
 # Correlation b/w features ----
+get_upper_tri <- function(cormat){
+  cormat[lower.tri(cormat)]<- NA
+  return(cormat)
+}
+get_lower_tri<-function(cormat){
+  cormat[upper.tri(cormat)] <- NA
+  return(cormat)
+}
+
+## Both hotels ----
+hotel_cat$is_canceled <- as.numeric(hotel_cat$is_canceled)%%2
+hotel_imp <- hotel_cat %>% 
+  select(is_canceled, 
+         lead_time,
+         adr, 
+         arrival_week_number = arrival_date_week_number,
+         prev_cancel_rate = previous_cancellation_ratio,
+         special_requests = total_of_special_requests,
+         require_parking_spaces = required_car_parking_spaces)
+hotel_cormat <- round(cor(hotel_imp, method = "spearman"),2)
+hotel_cor <- melt(get_lower_tri(hotel_cormat), na.rm = TRUE)
+# write.csv(city_cor, '.\\hotels_cor.csv', row.names=FALSE)
+ggplot(data = hotel_cor, aes(x=Var1, y=Var2, fill=value)) +
+  geom_tile() +
+  geom_text(aes(label=value)) +
+  scale_fill_gradient2(low = "blue", high = "red", mid = "white", 
+                       midpoint = 0, limit = c(-1,1), space = "Lab", 
+                       name="Spearman\nCorrelation") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, vjust = 0.5, hjust = 0.5)) +
+  coord_fixed() +
+  theme(axis.text = element_text(size=10), 
+        axis.title = element_text(size=12),
+        legend.title = element_text(size=12),
+        legend.text = element_text(size=10)) +
+  labs(x = "Features",
+       y = "Features") 
 
 ## City ----
-city$is_canceled <- as.numeric(city$is_canceled)
-city_imp <- city %>% 
+city_cat$is_canceled <- as.numeric(city_cat$is_canceled)%%2
+city_imp <- city_cat %>% 
   select(is_canceled, 
+         lead_time,
          adr, 
-         adults,
-         booking_changes,
-         children,
-         customer_type.Transient,
-         customer_type.Transient.Party,
-         distribution_channel.TA.TO,
-         market_segment.Groups,
-         market_segment.Online.TA,
-         market_segment.Offline.TA.TO,
-         previous_cancellation_ratio,
-         stays_in_nights,
-         total_of_special_requests)
-
-city_cor <- melt(round(cor(city_imp, method = "spearman"),2))
+         arrival_week_number = arrival_date_week_number,
+         prev_cancel_rate = previous_cancellation_ratio,
+         special_requests = total_of_special_requests,
+         require_parking_spaces = required_car_parking_spaces)
+city_cormat <- round(cor(city_imp, method = "spearman"),2)
+city_cor <- melt(get_lower_tri(city_cormat), na.rm = TRUE)
+# write.csv(city_cor, '.\\city_cor.csv', row.names=FALSE)
 ggplot(data = city_cor, aes(x=Var1, y=Var2, fill=value)) +
   geom_tile() +
+  geom_text(aes(label=value)) +
   scale_fill_gradient2(low = "blue", high = "red", mid = "white", 
                        midpoint = 0, limit = c(-1,1), space = "Lab", 
-                       name="Spearman Correlation") +
+                       name="Spearman\nCorrelation") +
+  theme_minimal() +
   theme(axis.text.x = element_text(angle = 45, vjust = 0.5, hjust = 0.5)) +
-  labs(title = "Correlation Matrix in City Hotel",
-       x = "Features",
-       y = "Features")
-write.csv(city_cor, '.\\city_cor.csv', row.names=FALSE)
+  coord_fixed() +
+  theme(axis.text = element_text(size=10), 
+        axis.title = element_text(size=12),
+        legend.title = element_text(size=12),
+        legend.text = element_text(size=10)) +
+  labs(x = "Features",
+       y = "Features") 
   
 ## Resort ----
-resort$is_canceled <- as.numeric(resort$is_canceled)
-resort_imp <- resort %>% 
+resort_cat$is_canceled <- as.numeric(resort_cat$is_canceled)%%2
+resort_imp <- resort_cat %>% 
   select(is_canceled, 
+         lead_time,
          adr, 
-         adults,
-         booking_changes,
-         children,
-         customer_type.Transient,
-         customer_type.Transient.Party,
-         distribution_channel.TA.TO,
-         market_segment.Groups,
-         market_segment.Online.TA,
-         market_segment.Offline.TA.TO,
-         previous_cancellation_ratio,
-         stays_in_nights,
-         total_of_special_requests)
-resort_cor <- melt(round(cor(resort_imp, method = "spearman"),2))
+         arrival_week_number = arrival_date_week_number,
+         prev_cancel_rate = previous_cancellation_ratio,
+         special_requests = total_of_special_requests,
+         require_parking_spaces = required_car_parking_spaces)
+resort_cormat <- round(cor(resort_imp, method = "spearman"),2)
+resort_cor <- melt(get_lower_tri(resort_cormat), na.rm = TRUE)
+# write.csv(resort_cor, '.\\resort_cor.csv', row.names=FALSE)
 ggplot(data = resort_cor, aes(x=Var1, y=Var2, fill=value)) +
   geom_tile() +
+  geom_text(aes(label=value)) +
   scale_fill_gradient2(low = "blue", high = "red", mid = "white", 
                        midpoint = 0, limit = c(-1,1), space = "Lab", 
-                       name="Spearman Correlation") +
+                       name="Spearman\nCorrelation") +
+  theme_minimal() +
   theme(axis.text.x = element_text(angle = 45, vjust = 0.5, hjust = 0.5)) +
-  labs(title = "Correlation Matrix in Resort Hotel",
-       x = "Features",
+  coord_fixed() +
+  theme(axis.text = element_text(size=10), 
+        axis.title = element_text(size=12),
+        legend.title = element_text(size=12),
+        legend.text = element_text(size=10)) +
+  labs(x = "Features",
        y = "Features")
-write.csv(resort_cor, '.\\resort_cor.csv', row.names=FALSE)
+
 
 # Compare resort, city hotel ----
 ggplot(hotel_all) +
